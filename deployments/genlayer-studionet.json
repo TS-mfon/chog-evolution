@@ -5,13 +5,8 @@
   "source": "genlayer/ClaimAdjudicator.py",
   "sourceSha256": "5b7b7d8c1d3d0d365f99ce76b3ded912a1a30ee4a474192df4728d0373f74bda",
   "deployer": "0xEd9EDd8586b20524CafA4F568413C504C9B03172",
-  "transactionHash": "0xe78797c0b016260027011617fa7866fdd45609a140670765457f5e485efdc163",
-  "status": "finalized_failure",
-  "submittedAt": "2026-10-18T10:24:48.570Z",
-  "finalizedAt": "2026-10-18T10:24:59.676Z",
-  "contractAddress": null,
-  "executionOutcome": "NO_MAJORITY",
-  "note": "The transaction reached FINALIZED but did not execute successfully; no contract address was created. The StudioNet receipt returned result NO_MAJORITY.",
+  "transactionHash": "0x7bdba747afc521f37b93ab78e595c48ebed533875352128d30eceb6e846f8a18",
+  "attempt": 3,
   "attempts": [
     {
       "transactionHash": "0xe78797c0b016260027011617fa7866fdd45609a140670765457f5e485efdc163",
@@ -20,6 +15,28 @@
       "contractAddress": null,
       "submittedAt": "2026-10-18T10:24:48.570Z",
       "finalizedAt": "2026-10-18T10:24:59.676Z"
+    },
+    {
+      "transactionHash": "0xe78797c0b016260027011617fa7866fdd45609a140670765457f5e485efdc163",
+      "status": "finalized_failure",
+      "contractAddress": null,
+      "submittedAt": "2026-10-18T10:24:48.570Z",
+      "finalizedAt": "2026-10-18T10:24:59.676Z"
+    },
+    {
+      "transactionHash": "0x7bdba747afc521f37b93ab78e595c48ebed533875352128d30eceb6e846f8a18",
+      "txExecutionResultName": null,
+      "contractAddress": "0x73Bd1106FFa722cf8e71A04f612ee868CDCd2396",
+      "submittedAt": "2026-10-18T14:50:10.692Z",
+      "finalizedAt": "2026-10-18T14:50:17.589Z"
     }
-  ]
+  ],
+  "status": "finalized_deployment_verified",
+  "submittedAt": "2026-10-18T14:50:10.692Z",
+  "finalizedAt": "2026-10-18T14:50:17.589Z",
+  "txExecutionResultName": null,
+  "contractAddress": "0x73Bd1106FFa722cf8e71A04f612ee868CDCd2396",
+  "deploymentVerified": true,
+  "schemaMethodCount": 2,
+  "clientVersion": "genlayer-js@1.1.8"
 }
