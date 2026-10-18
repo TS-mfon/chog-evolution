@@ -60,6 +60,9 @@ jobs:
           set_env MONAD_MAINNET_CHAIN_ID "143"
           set_env MONAD_MAINNET_RPC_URL "https://rpc.monad.xyz"
           set_env ORIGINAL_CHOG_COLLECTION_ADDRESS "0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763"
+          set_env GENLAYER_NETWORK "studionet"
+          set_env GENLAYER_RPC_URL "https://studio.genlayer.com/api"
+          set_env GENLAYER_CONTRACT_ADDRESS "0x73Bd1106FFa722cf8e71A04f612ee868CDCd2396"
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
@@ -68,3 +71,11 @@ jobs:
         run: npx vercel deploy --prod --yes --token "$VERCEL_TOKEN"
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      - name: Smoke test production alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          ready="$(curl --fail --silent --show-error --retry 5 --retry-all-errors https://chog-evolution.vercel.app/api/ready)"
+          quests="$(curl --fail --silent --show-error --retry 5 --retry-all-errors https://chog-evolution.vercel.app/api/v1/quests)"
+          printf '%s' "$ready" | jq -e '.status == "ready" and .dependencies.mongodb == "available"'
+          printf '%s' "$quests" | jq -e '.items | length > 0'
