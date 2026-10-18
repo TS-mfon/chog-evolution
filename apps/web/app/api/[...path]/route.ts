@@ -34,7 +34,7 @@ async function handle(request: Request): Promise<Response> {
       responseHeaders.set(key, String(value));
     }
   }
-  return new Response(result.rawPayload, {
+  return new Response(new Uint8Array(result.rawPayload), {
     status: result.statusCode,
     headers: responseHeaders,
   });

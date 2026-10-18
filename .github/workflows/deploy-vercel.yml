@@ -23,6 +23,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Apply MongoDB migrations
+        run: npm run db:migrate --workspace=@chog/api
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_DATABASE: chog_evolution
       - name: Link Vercel project
         run: npx vercel link --yes --project chog-evolution --token "$VERCEL_TOKEN"
         env:
