@@ -32,7 +32,7 @@ jobs:
           MONGODB_DATABASE: chog_evolution
           GENLAYER_NETWORK: studionet
           GENLAYER_RPC_URL: https://studio.genlayer.com/api
-          GENLAYER_CONTRACT_ADDRESS: 0x73Bd1106FFa722cf8e71A04f612ee868CDCd2396
+          GENLAYER_CONTRACT_ADDRESS: "0x73Bd1106FFa722cf8e71A04f612ee868CDCd2396"
           GENLAYER_PRIVATE_KEY: ${{ secrets.GENLAYER_PRIVATE_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_IMAGE_MODEL: gemini-3.1-flash-image
@@ -43,7 +43,7 @@ jobs:
           MONGODB_DATABASE: chog_evolution
           GENLAYER_NETWORK: studionet
           GENLAYER_RPC_URL: https://studio.genlayer.com/api
-          GENLAYER_CONTRACT_ADDRESS: 0x73Bd1106FFa722cf8e71A04f612ee868CDCd2396
+          GENLAYER_CONTRACT_ADDRESS: "0x73Bd1106FFa722cf8e71A04f612ee868CDCd2396"
           GENLAYER_PRIVATE_KEY: ${{ secrets.GENLAYER_PRIVATE_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_IMAGE_MODEL: gemini-3.1-flash-image
