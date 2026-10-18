@@ -1,0 +1,17 @@
+node_modules/
+.next/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+mongodb.md
+.env.build
+.unlazy/
+*.log
+*.tsbuildinfo
+out/
+cache/
+artifacts/
+__pycache__/
+.venv/

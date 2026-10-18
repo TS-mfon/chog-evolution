@@ -1,0 +1,25 @@
+{
+  "network": "studionet",
+  "chainId": 61999,
+  "rpc": "https://studio.genlayer.com/api",
+  "source": "genlayer/ClaimAdjudicator.py",
+  "sourceSha256": "5b7b7d8c1d3d0d365f99ce76b3ded912a1a30ee4a474192df4728d0373f74bda",
+  "deployer": "0xEd9EDd8586b20524CafA4F568413C504C9B03172",
+  "transactionHash": "0xe78797c0b016260027011617fa7866fdd45609a140670765457f5e485efdc163",
+  "status": "finalized_failure",
+  "submittedAt": "2026-10-18T10:24:48.570Z",
+  "finalizedAt": "2026-10-18T10:24:59.676Z",
+  "contractAddress": null,
+  "executionOutcome": "NO_MAJORITY",
+  "note": "The transaction reached FINALIZED but did not execute successfully; no contract address was created. The StudioNet receipt returned result NO_MAJORITY.",
+  "attempts": [
+    {
+      "transactionHash": "0xe78797c0b016260027011617fa7866fdd45609a140670765457f5e485efdc163",
+      "statusName": "FINALIZED",
+      "executionOutcome": "NO_MAJORITY",
+      "contractAddress": null,
+      "submittedAt": "2026-10-18T10:24:48.570Z",
+      "finalizedAt": "2026-10-18T10:24:59.676Z"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "schema": "chog-reference-manifest-v1",
+  "source": "user-supplied project assets/chog-references",
+  "upstreamRepository": null,
+  "upstreamCommit": null,
+  "provenance": "Local images supplied with the project. Upstream repository, commit, and licensing details were not included.",
+  "references": [
+    {
+      "file": "reference-01.png",
+      "sha256": "5b8267dda4b26554b1a982cc6e062e10220de24388baab29330b85895d3d8bd5"
+    },
+    {
+      "file": "reference-02.png",
+      "sha256": "bd8abab50b8a32c693ded910ee1d40838a31f2d4e2c2774c37a89ca184602b2c"
+    },
+    {
+      "file": "reference-03.png",
+      "sha256": "17b00cdff7f4170fb3ca9962dd28eaa55ec4d8db6a39a39afe3dad8bc55770a0"
+    },
+    {
+      "file": "reference-04.png",
+      "sha256": "e775c3245b2d14ba95542c817b6126040cce4bf04d0a7a4573062d701f2d18a2"
+    },
+    {
+      "file": "reference-05.png",
+      "sha256": "d5fd0b1eb6ed0583b41e72610e705c90aed29f95012992a0915fbff88367fb64"
+    }
+  ]
+}

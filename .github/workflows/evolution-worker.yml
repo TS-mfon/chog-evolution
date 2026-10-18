@@ -1,0 +1,51 @@
+name: Evolution worker
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: chog-evolution-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  process-one-batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build --workspace=@chog/worker
+      - name: Check worker configuration
+        run: |
+          node -e 'for (const key of ["MONGODB_URI", "GENLAYER_NETWORK", "GENLAYER_RPC_URL", "GENLAYER_CONTRACT_ADDRESS", "GENLAYER_PRIVATE_KEY"]) { if (!process.env[key]) { console.error(`Missing required GitHub Actions secret/variable: ${key}`); process.exitCode = 1; } }'
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_DATABASE: ${{ vars.MONGODB_DATABASE }}
+          GENLAYER_NETWORK: ${{ vars.GENLAYER_NETWORK }}
+          GENLAYER_RPC_URL: ${{ vars.GENLAYER_RPC_URL }}
+          GENLAYER_CONTRACT_ADDRESS: ${{ vars.GENLAYER_CONTRACT_ADDRESS }}
+          GENLAYER_PRIVATE_KEY: ${{ secrets.GENLAYER_PRIVATE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_IMAGE_MODEL: ${{ vars.GEMINI_IMAGE_MODEL }}
+      - run: npm run once --workspace=@chog/worker
+        env:
+          NODE_ENV: production
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          MONGODB_DATABASE: ${{ vars.MONGODB_DATABASE }}
+          GENLAYER_NETWORK: ${{ vars.GENLAYER_NETWORK }}
+          GENLAYER_RPC_URL: ${{ vars.GENLAYER_RPC_URL }}
+          GENLAYER_CONTRACT_ADDRESS: ${{ vars.GENLAYER_CONTRACT_ADDRESS }}
+          GENLAYER_PRIVATE_KEY: ${{ secrets.GENLAYER_PRIVATE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_IMAGE_MODEL: ${{ vars.GEMINI_IMAGE_MODEL }}
+          WORKER_POLL_INTERVAL_MS: "1000"
+          WORKER_LEASE_MS: "180000"
