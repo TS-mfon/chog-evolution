@@ -1,0 +1,35 @@
+name: Deploy GenLayer adjudicator
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-genlayer-studionet
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Deploy and verify on StudioNet
+        run: node scripts/deploy-genlayer.mjs
+        env:
+          GENLAYER_PRIVATE_KEY: ${{ secrets.GENLAYER_PRIVATE_KEY }}
+          RETRY_FINALIZED_FAILURE: "1"
+      - name: Commit verified deployment manifest
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deployments/genlayer-studionet.json
+          git diff --cached --quiet || git commit -m "Record verified GenLayer StudioNet deployment"
+          git push

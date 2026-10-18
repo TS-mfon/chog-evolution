@@ -8,6 +8,7 @@ const root = resolve(import.meta.dirname, "..");
 const sourcePath = resolve(root, "genlayer/ClaimAdjudicator.py");
 const manifestPath = resolve(root, "deployments/genlayer-studionet.json");
 const envBuildPath = process.env.ENV_BUILD_PATH ?? "/home/sudodave/.env.build";
+const chain = studionet;
 
 let previousAttempts = [];
 if (await fileExists(manifestPath)) {
@@ -29,11 +30,15 @@ if (await fileExists(manifestPath)) {
   ];
 }
 
-const envText = await readFile(envBuildPath, "utf8");
+const envText = process.env.GENLAYER_PRIVATE_KEY
+  ? ""
+  : await readFile(envBuildPath, "utf8");
 const keyLine = envText.split(/\r?\n/).find((line) =>
   /^\s*(?:export\s+)?PRIVATE_KEY\s*=/.test(line),
 );
-const privateKey = keyLine?.split("=", 2)[1]?.trim().replace(/^['"]|['"]$/g, "");
+const privateKey =
+  process.env.GENLAYER_PRIVATE_KEY ??
+  keyLine?.split("=", 2)[1]?.trim().replace(/^['"]|['"]$/g, "");
 if (!privateKey || !/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
   throw new Error("PRIVATE_KEY is missing or malformed in the configured build env file");
 }
@@ -45,15 +50,15 @@ if (account.address.toLowerCase() !== "0xed9edd8586b20524cafa4f568413c504c9b0317
   throw new Error("The build key does not match the previously configured deployment account");
 }
 
-const client = createClient({ chain: studionet, account });
+const client = createClient({ chain, account });
 const schema = await client.getContractSchemaForCode(code);
 if (!schema) throw new Error("GenLayer returned no contract schema; deployment was not submitted");
 
-const transactionHash = await client.deployContract({ code });
+const transactionHash = await client.deployContract({ code, leaderOnly: true });
 const record = {
   network: "studionet",
-  chainId: Number(studionet.id),
-  rpc: "https://studio.genlayer.com/api",
+  chainId: Number(chain.id),
+  rpc: chain.rpcUrls.default.http[0],
   source: "genlayer/ClaimAdjudicator.py",
   sourceSha256: codeHash,
   deployer: account.address,
@@ -73,13 +78,30 @@ try {
     interval: 10_000,
     retries: 30,
   });
+  let deployedSchema = null;
+  if (result.contractAddress) {
+    try {
+      deployedSchema = await client.getContractSchema(result.contractAddress);
+    } catch {
+      deployedSchema = null;
+    }
+  }
+  const deploymentVerified = Boolean(result.contractAddress && deployedSchema);
   const finalizedRecord = {
     ...record,
-    status: isSuccessful(result) ? "finalized_success" : "finalized_failure",
+    status: deploymentVerified
+      ? "finalized_deployment_verified"
+      : isSuccessful(result)
+        ? "finalized_success_unverified"
+        : "finalized_without_verified_deployment",
     finalizedAt: new Date().toISOString(),
     statusName: result.statusName,
     txExecutionResultName: result.txExecutionResultName,
     contractAddress: result.contractAddress ?? null,
+    deploymentVerified,
+    schemaMethodCount: deployedSchema
+      ? Object.keys(deployedSchema.methods ?? {}).length
+      : 0,
     attempts: [...previousAttempts, {
       transactionHash: String(transactionHash),
       statusName: result.statusName,
@@ -91,7 +113,7 @@ try {
   };
   await writeFile(manifestPath, `${JSON.stringify(finalizedRecord, null, 2)}\n`, { mode: 0o600 });
   console.log(JSON.stringify({ event: "genlayer_contract_finalized", ...finalizedRecord }));
-  if (!isSuccessful(result)) process.exitCode = 2;
+  if (!deploymentVerified) process.exitCode = 2;
 } catch (error) {
   const pendingRecord = {
     ...record,
