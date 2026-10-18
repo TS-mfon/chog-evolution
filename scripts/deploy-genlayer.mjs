@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createAccount, createClient, isSuccessful } from "genlayer-js";
-import { studionet } from "genlayer-js/chains";
+import { createAccount, createClient } from "genlayer-js-stable";
+import { studionet } from "genlayer-js-stable/chains";
+import { TransactionStatus } from "genlayer-js-stable/types";
 
 const root = resolve(import.meta.dirname, "..");
 const sourcePath = resolve(root, "genlayer/ClaimAdjudicator.py");
@@ -73,31 +74,31 @@ await writeFile(manifestPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o
 console.log(JSON.stringify({ event: "genlayer_contract_submitted", ...record }));
 
 try {
-  const result = await client.waitForFinalization({
+  const result = await client.waitForTransactionReceipt({
     hash: transactionHash,
-    interval: 10_000,
-    retries: 30,
+    status: TransactionStatus.ACCEPTED,
+    interval: 5_000,
+    retries: 120,
   });
+  const contractAddress = result.data?.contract_address ?? result.txDataDecoded?.contractAddress ?? null;
   let deployedSchema = null;
-  if (result.contractAddress) {
+  if (contractAddress) {
     try {
-      deployedSchema = await client.getContractSchema(result.contractAddress);
+      deployedSchema = await client.getContractSchema(contractAddress);
     } catch {
       deployedSchema = null;
     }
   }
-  const deploymentVerified = Boolean(result.contractAddress && deployedSchema);
+  const deploymentVerified = Boolean(contractAddress && deployedSchema);
   const finalizedRecord = {
     ...record,
     status: deploymentVerified
       ? "finalized_deployment_verified"
-      : isSuccessful(result)
-        ? "finalized_success_unverified"
-        : "finalized_without_verified_deployment",
+      : "accepted_without_verified_deployment",
     finalizedAt: new Date().toISOString(),
     statusName: result.statusName,
-    txExecutionResultName: result.txExecutionResultName,
-    contractAddress: result.contractAddress ?? null,
+    txExecutionResultName: result.txExecutionResultName ?? null,
+    contractAddress,
     deploymentVerified,
     schemaMethodCount: deployedSchema
       ? Object.keys(deployedSchema.methods ?? {}).length
@@ -106,10 +107,11 @@ try {
       transactionHash: String(transactionHash),
       statusName: result.statusName,
       txExecutionResultName: result.txExecutionResultName ?? null,
-      contractAddress: result.contractAddress ?? null,
+      contractAddress,
       submittedAt: record.submittedAt,
       finalizedAt: new Date().toISOString(),
     }],
+    clientVersion: "genlayer-js@1.1.8",
   };
   await writeFile(manifestPath, `${JSON.stringify(finalizedRecord, null, 2)}\n`, { mode: 0o600 });
   console.log(JSON.stringify({ event: "genlayer_contract_finalized", ...finalizedRecord }));
