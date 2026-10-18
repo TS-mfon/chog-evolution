@@ -32,10 +32,17 @@ const localDemoEnabled = () =>
   process.env.NODE_ENV !== "production" &&
   process.env.ENABLE_LOCAL_DEMO_SCENARIOS === "true";
 
+const configuredWebOrigin = () => {
+  if (process.env.WEB_ORIGIN) return process.env.WEB_ORIGIN;
+  const vercelHost =
+    process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
+  return vercelHost ? `https://${vercelHost}` : "http://localhost:3000";
+};
+
 export function buildApp(repository?: ScenarioRepository): FastifyInstance {
   const app = Fastify({ logger: true });
   app.register(cors, {
-    origin: process.env.WEB_ORIGIN ?? "http://localhost:3000",
+    origin: configuredWebOrigin(),
     credentials: true,
   });
   app.register(cookie);
@@ -114,7 +121,7 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
         const challenge = await auth.issueNonce(
           address as `0x${string}`,
           chainId,
-          process.env.WEB_ORIGIN ?? "http://localhost:3000",
+          configuredWebOrigin(),
         );
         return reply.code(201).send(challenge);
       } catch (error) {
