@@ -78,9 +78,9 @@ This is a traceability ledger for `build-plan.md` (all duplicated PRD/specificat
 ## Summary of outstanding release blockers
 
 1. A verified active quest and its actual completion signal are not configured; without one, no real activity can earn XP.
-2. No demo contract or GenLayer adjudicator has been deployed; Monad RPC was unreachable and GenLayer schema RPC failed before any submission.
+2. Monad demo contract is deployed and verified: `0x45119A32ca6C4d67424401dA92Abe4EC6c83f8Ce`, tx `0xe5d40c17743d7e19f6e7e0290386ee2519fe6eec929eef92f8cdca40daaf3218`. GenLayer adjudicator remains undeployed: the prior StudioNet attempt finalized `NO_MAJORITY`; retry submission was blocked by Node RPC DNS failure, and CLI could not decrypt its configured keystore.
 3. X OAuth is intentionally out of scope. Bio-code verification is implemented but requires reachable X User Lookup access; X post/activity ingestion is not implemented.
 4. Gemini image generation and MongoDB GridFS publication are implemented in the worker but unverified live; the smoke request failed with an API connection error, and MongoDB could not be reached. The UI falls back to deterministic SVG until a published artifact is available.
 5. MongoDB runtime is unverified: a ping using the supplied URI failed in this environment; all Mongo transaction workflows therefore remain unproven end-to-end.
-6. The publish copy is committed locally at `/tmp/chog-evolution-publish-20261018` (commit `21929e2`) with `.env.build`, `mongodb.md`, environment files, and generated files excluded. GitHub CLI currently reports the TS-mfon token invalid; `gh api user` and `gh auth refresh` fail to connect to `api.github.com`, so remote creation/push is blocked. The installed Vercel CLI 62.2.0 also fails `whoami` with `fetch failed`; there is no deployed API origin, so deploying a frontend that points to localhost would not be a valid release.
+6. The private GitHub repository exists and the credential-clean project was pushed to `TS-mfon/chog-evolution` (`main`, `b1b273b`). Vercel CLI 62.2.0 identity lookup fails with `fetch failed`; the frontend remains undeployed and needs a reachable Vercel session plus a deployed API origin to avoid shipping a broken localhost configuration.
 7. Reference image hashes are recorded, but upstream repository/commit and provenance still need confirmation.

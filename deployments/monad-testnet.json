@@ -1,0 +1,21 @@
+{
+  "network": "Monad Testnet",
+  "chainId": 10143,
+  "rpcUrl": "https://testnet-rpc.monad.xyz",
+  "contractName": "CHOG Evolution Demo",
+  "symbol": "DCHOG",
+  "contractAddress": "0x45119A32ca6C4d67424401dA92Abe4EC6c83f8Ce",
+  "transactionHash": "0xe5d40c17743d7e19f6e7e0290386ee2519fe6eec929eef92f8cdca40daaf3218",
+  "deployer": "0xEd9EDd8586b20524CafA4F568413C504C9B03172",
+  "maxSupply": "10000",
+  "baseURI": "",
+  "deploymentSourceSha256": "9c6d0f38c813f3f9c8b86a6fea1dc0a0f1d1322d920dc9c81ef25ed3900420aa",
+  "status": "confirmed_and_verified",
+  "blockNumber": 72171331,
+  "gasUsed": 1436379,
+  "verifiedName": "CHOG Evolution Demo",
+  "verifiedSymbol": "DCHOG",
+  "verifiedMaxSupply": "10000",
+  "verifiedOwner": "0xed9edd8586b20524cafa4f568413c504c9b03172",
+  "confirmedAt": "2026-10-18T10:41:02.198Z"
+}
