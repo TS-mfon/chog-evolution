@@ -25,11 +25,11 @@ This table supersedes implementation gaps in the historical ledger below. Exact 
 | MVP-013 | Explicit repeatable migrations/readiness               | Schema-3 marker, interrupted backfill and retry tests                      | Passed local integration                     |
 | MVP-014 | Bounded operational metrics and pagination             | Runtime metrics, shared quota and cursor tests                             | Passed local integration                     |
 | MVP-015 | Supplied reference provenance pinned                   | Five SHA-256 matches at approved repository revision                       | Verified locally                             |
-| MVP-016 | Preserve Git history, push and deploy existing project | Normal commit/push, CI gates, alias smoke                                  | See current release record                   |
+| MVP-016 | Preserve Git history, push and deploy existing project | Normal commit/push, CI gates, alias smoke                                  | Passed live; see release record                   |
 | MVP-017 | Live wallet-to-artwork acceptance                      | Mint tx, finalized accepted decision, one 50 XP entry, public PNG readback | Passed live                                  |
-| MVP-018 | Controlled X bio/post and media live check             | User-provided account and real anonymous retrieval                         | See current release record                   |
-| MVP-019 | Demo metadata URI owner configuration                  | Read-only default command and transaction journal                          | See current release record                   |
-| MVP-020 | Truthful release record and deferred scope             | Current release ledger; no substituted fixture proof                       | Passed: 27 cases / 33 collections            |
+| MVP-018 | Controlled X bio/post and media live check             | User-provided account and real anonymous retrieval                         | Passed live; see release record                   |
+| MVP-019 | Demo metadata URI owner configuration                  | Read-only default command and transaction journal                          | Passed live; see release record                   |
+| MVP-020 | Truthful release record and deferred scope             | Current release ledger; no substituted fixture proof                       | Verified; Gemini quota explicit            |
 
 ## Historical requirement ledger — 2026-10-18
 
