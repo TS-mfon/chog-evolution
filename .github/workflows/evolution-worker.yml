@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run build --workspace=@chog/worker
@@ -49,3 +49,16 @@ jobs:
           GEMINI_IMAGE_MODEL: gemini-3.1-flash-image
           WORKER_POLL_INTERVAL_MS: "1000"
           WORKER_LEASE_MS: "180000"
+          WORKER_BATCH_SIZE: "10"
+          APP_ORIGIN: https://chog-evolution.vercel.app
+          PUBLIC_API_PATH: /api
+          WEB_ORIGIN: https://chog-evolution.vercel.app
+          MONAD_TESTNET_CHAIN_ID: "10143"
+          MONAD_TESTNET_RPC_URL: https://testnet-rpc.monad.xyz
+          DEMO_COLLECTION_ADDRESS: "0x45119A32ca6C4d67424401dA92Abe4EC6c83f8Ce"
+          MONAD_MAINNET_CHAIN_ID: "143"
+          MONAD_MAINNET_RPC_URL: https://rpc.monad.xyz
+          ORIGINAL_CHOG_COLLECTION_ADDRESS: "0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763"
+          X_SOURCE_MODE: ${{ vars.X_SOURCE_MODE || 'public_page' }}
+          X_API_BEARER_TOKEN: ${{ secrets.X_API_BEARER_TOKEN }}
+          GITHUB_PUBLIC_READ_TOKEN: ${{ secrets.GITHUB_PUBLIC_READ_TOKEN }}

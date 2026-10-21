@@ -1,32 +1,21 @@
 # Local setup
 
-## Requirements
+Use Node.js 24, npm 11 and a MongoDB replica set (Atlas or MongoDB 7+). Foundry and `genvm-lint==0.11.0` are needed for the full contract verification gate.
 
-- Node.js 22 or later and npm 11 or later
-- MongoDB 7+ (or MongoDB Atlas replica set) for application and worker persistence
-- Foundry only for Solidity tests/deployment
-- Python and GenLayer CLI only for contract lint/deployment
+1. Run `npm ci`.
+2. Copy `.env.example` to `.env`; configure `MONGODB_URI` and `MONGODB_DATABASE`.
+3. For a local replica set, run `docker compose up -d mongodb`.
+4. Run `npm run db:migrate`. The root command loads `.env`; a configured shell may use `npm run db:migrate --workspace=@chog/api`.
+5. Run `npm run dev` and open http://localhost:3000. Root `.env` is loaded for the web, standalone API and continuous worker. The web uses its same-origin `/api` adapter.
 
-## Start the application
+Migrations are explicit and repeatable. Schema version 3 adds capture checkpoints, claim attempts, equipment, source events and operational indexes while preserving historical evidence and XP. `/api/ready` requires Mongo connectivity and the current schema marker. Cold starts never run migrations.
 
-1. Copy `.env.example` to `.env`; keep secrets out of source control.
-2. Start the local replica set with `docker compose up -d mongodb` or configure an Atlas URI; set `MONGODB_URI` and `MONGODB_DATABASE`.
-3. Install locked dependencies using `npm ci`.
-4. Load variables in the shell (`set -a; . ./.env; set +a`) and initialize MongoDB indexes and starter quests with `npm run db:migrate --workspace=@chog/api`.
-5. Run `npm run dev`; visit `http://localhost:3000` and API health at `http://localhost:4000/health`.
-6. Without a deployed demo collection the wallet mint control is unavailable. Local simulated records can be enabled with both `ENABLE_LOCAL_DEMO_SCENARIOS=true` and `NEXT_PUBLIC_ENABLE_LOCAL_SIMULATION=true`; these are visibly simulated and are not evidence of live provider behavior.
+The demo collection and GenLayer adjudicator addresses refer to existing deployments. Minting requires real wallet confirmation and testnet MON. `GENLAYER_PRIVATE_KEY` must be the funded owner of the adjudicator. Validators require a public HTTPS evidence URL: configure `APP_ORIGIN` with `/api` or an explicit `PUBLIC_API_URL`. `WEB_ORIGIN` must match the browser origin for CORS and signed challenges.
 
-## Useful commands
+X uses anonymous public pages with `X_SOURCE_MODE=public_page`. No OAuth or API key is required. `X_API_BEARER_TOKEN` is used only by optional explicit `api` mode. GitHub evidence works without a token; `GITHUB_PUBLIC_READ_TOKEN` increases its rate limit. A submitted GitHub README must attribute the wallet. An X post must belong to the verified stable X account ID. Images are captured without image-content analysis.
 
-```sh
-npm run check
-npm test
-npm run build
-npm run db:migrate --workspace=@chog/api
-docker compose up -d mongodb
-forge test --root contracts
-node scripts/verify-genlayer.mjs
-node scripts/verify-project-docs.mjs
-```
+`GEMINI_API_KEY` enables optional generation for rewarded claims. Without it the deterministic renderer publishes trait artwork. Cosmetic changes always use that renderer. Configured provider failures preserve prior published art and schedule recovery.
 
-The MongoDB database must support transactions (Atlas or a replica set) because linked-account, claim, and reward writes are atomic. Contract deployment, GenLayer integration, X profile lookup, and Gemini generation require credentials and deployed configuration; see [integrations.md](integrations.md) and [testing.md](testing.md).
+For persistent acceptance, create ignored `.env.integration` with `MONGODB_TEST_URI` for a transaction-capable test server. Runners create unique `chog_test_` databases, verify ownership markers and clean up only their own database. They never select the application database. Run `npm run test:integration` and, after building and installing Chromium with `npx playwright install chromium`, `npm run test:browser:all`. Select an existing Chromium with `CHOG_CHROMIUM_EXECUTABLE` if needed.
+
+Run `npm test`, `node scripts/verify-mvp.mjs` and the acceptance suites before release. See [testing.md](testing.md) and [deployment.md](deployment.md).

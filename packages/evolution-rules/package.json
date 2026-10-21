@@ -3,7 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
-  "scripts": { "build": "tsc --noEmit", "check": "tsc --noEmit", "test": "node --import tsx --test test/*.test.ts" },
-  "devDependencies": { "typescript": "^5.9.3" }
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "node --import tsx --test --test-isolation=none test/*.test.ts"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
 }

@@ -5,17 +5,19 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "npm run build --workspace=@chog/api && tsc",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test test/*.test.ts",
+    "test": "npm run build --workspace=@chog/api && node --import tsx --test --test-isolation=none --test-reporter=tap test/*.test.ts",
     "start": "node dist/index.js",
     "once": "node dist/index.js --once"
   },
   "dependencies": {
+    "@chog/api": "0.1.0",
     "@chog/evolution-rules": "0.1.0",
+    "@chog/art-composition": "0.1.0",
     "@chog/shared-types": "0.1.0",
     "@google/genai": "^2.30.0",
-    "genlayer-js": "2.0.0-rc.1",
+    "genlayer-js-stable": "npm:genlayer-js@1.1.8",
     "mongodb": "^7.7.0",
     "sharp": "^0.35.5"
   },

@@ -15,3 +15,7 @@ cache/
 artifacts/
 __pycache__/
 .venv/
+
+# Local CLI credentials; never commit
+.local-auth/
+.vercel/

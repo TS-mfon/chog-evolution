@@ -1,43 +1,162 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
-import { artDataUri, composeDemoChog } from "@chog/art-composition";
+import Link from "next/link";
+import { use, useState } from "react";
+import { Icon } from "../../../components/icons";
+import {
+  EmptyState,
+  EvolutionTimeline,
+  Loading,
+  Notice,
+  PageHeader,
+  ProfileTraits,
+  ProfileArtwork,
+  Progress,
+} from "../../../components/ui";
+import { titleCase } from "../../../lib/api";
+import { usePassport } from "../../../lib/use-passport";
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000").replace(/\/$/, "");
-type Passport = {
-  profile: { id: string; nft: { mode: string; chainId: number; collectionAddress: string; tokenId: string }; displayName: string; xp: number; level: number; stage: string; traits: string[]; version: number };
-  history: { id: string; previousVersion: number; newVersion: number; xpTotal: number; changes: { xpAward?: number; stage?: string }; createdAt: string; questSlug: string; outcome: string; reasonCode: string; explanation: string; decisionReference?: string | null; evidenceHash?: string | null; evidenceUrl?: string | null }[];
-};
-
-export default function PassportPage({ params }: { params: Promise<{ id: string }> }) {
+export default function PassportPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const { id } = use(params);
-  const [passport, setPassport] = useState<Passport | null>(null);
-  const [message, setMessage] = useState("Loading public evolution history…");
+  const {
+    passport,
+    loading,
+    error,
+    refresh,
+    loadMore,
+    loadingMore,
+    moreError,
+  } = usePassport(id);
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    void fetch(`${API_BASE}/v1/passports/${encodeURIComponent(id)}`)
-      .then(async (response) => {
-        const body = await response.json() as { item?: Passport; error?: string };
-        if (!response.ok || !body.item) throw new Error(body.error || `Passport returned ${response.status}`);
-        setPassport(body.item); setMessage("");
-      })
-      .catch((error) => setMessage(error instanceof Error ? error.message : "Passport is unavailable."));
-  }, [id]);
-
-  async function copyLink() {
-    await navigator.clipboard.writeText(window.location.href);
-    setCopied(true); window.setTimeout(() => setCopied(false), 1800);
+  const [copyError, setCopyError] = useState("");
+  async function share() {
+    setCopyError("");
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+      setCopied(true);
+    } catch {
+      setCopyError(
+        "Copy the address from your browser to share this Chog’s passport.",
+      );
+    }
   }
-
-  return <main className="passport-shell">
-    <header><a href="/">CHOG / EVOLUTION</a><span>PUBLIC PASSPORT</span></header>
-    {message && <p role="status">{message}</p>}
-    {passport && <>
-      <section className="passport-hero"><div className="eyebrow">{passport.profile.nft.mode === "demo" ? "DEMO COLLECTION · MONAD TESTNET" : "ORIGINAL CHOG · COMPANION PROFILE"}</div>{passport.profile.nft.mode === "demo" && <><img className="passport-art" src={artDataUri(passport.profile.nft.tokenId, passport.profile.stage)} alt={`Chogins demo artwork, ${passport.profile.stage} stage`}/><div className="passport-traits">{composeDemoChog(passport.profile.nft.tokenId, passport.profile.stage).traits.map((trait) => <span key={trait.name}>{trait.name}: {trait.value}</span>)}</div></>}<h1>{passport.profile.displayName} <em>#{passport.profile.nft.tokenId}</em></h1><p>{passport.profile.stage} · Level {passport.profile.level} · {passport.profile.xp} XP</p><code>{passport.profile.nft.collectionAddress}</code><button onClick={() => void copyLink()}>{copied ? "Link copied" : "Share this Passport ↗"}</button></section>
-      <section className="passport-story"><div className="eyebrow">EVOLUTION HISTORY</div><h2>{passport.history.length} verified milestone{passport.history.length === 1 ? "" : "s"}</h2>{passport.history.length === 0 ? <p>No accepted evolution events have been recorded yet.</p> : <ol>{passport.history.map((event) => <li key={event.id}><span className="passport-step">VERSION {event.previousVersion} → {event.newVersion}</span><h3>{event.questSlug.replaceAll("-", " ")}</h3><p>{event.explanation}</p><p>+{event.changes.xpAward ?? 0} XP · {event.xpTotal} total XP · {event.changes.stage || "stage unchanged"}</p><small>{new Date(event.createdAt).toLocaleString()}</small>{event.evidenceHash && <p><small>Evidence SHA-256: {event.evidenceHash}</small></p>}{event.evidenceUrl && <a href={event.evidenceUrl} target="_blank" rel="noreferrer">View public evidence ↗</a>}{event.decisionReference && <p><small>Finalized decision: {event.decisionReference}</small></p>}</li>)}</ol>}</section>
-      {passport.profile.nft.mode === "original_companion" && <p className="passport-disclaimer">This evolution Passport records a companion profile. It does not change the original Chog NFT metadata.</p>}
-    </>}
-    <footer><a href="/">← Return to Evolution Lab</a><span>History shows finalized accepted claims only.</span></footer>
-  </main>;
+  return (
+    <main id="main-content" className="product-page section-width">
+      <PageHeader
+        eyebrow="A STORY WORTH KEEPING"
+        title={
+          passport
+            ? `${passport.profile.displayName}’s passport.`
+            : "A little piece of Chog history."
+        }
+        description="An open record of this Chog’s rewards, earned traits, and changing look."
+      />
+      {loading && !passport && <Loading label="Opening this Chog’s story…" />}
+      {error && (
+        <Notice
+          tone="error"
+          action={
+            <button type="button" className="text-button" onClick={refresh}>
+              Try again
+            </button>
+          }
+        >
+          {error}
+        </Notice>
+      )}
+      {passport && (
+        <div className="passport-layout">
+          <aside className="passport-summary">
+            <ProfileArtwork profile={passport.profile} />
+            <h2>{passport.profile.displayName}</h2>
+            <span className="stage-pill">
+              {titleCase(passport.profile.stage)} · Level{" "}
+              {passport.profile.level}
+            </span>
+            <Progress profile={passport.profile} />
+            <ProfileTraits profile={passport.profile} />
+            <button
+              className="button button-secondary"
+              type="button"
+              onClick={() => void share()}
+            >
+              <Icon name={copied ? "check" : "copy"} size={17} />
+              {copied ? "Passport link copied" : "Share this passport"}
+            </button>
+            {copyError && (
+              <p className="inline-message" role="status">
+                {copyError}
+              </p>
+            )}
+            <p className="passport-note">
+              {passport.profile.nft.mode === "demo"
+                ? "A demo Chog NFT on Monad Testnet, with a story all its own."
+                : "This passport follows a companion profile for an original Chog. Its original collection artwork stays its own."}
+            </p>
+          </aside>
+          <section
+            className="passport-history"
+            aria-labelledby="passport-history-heading"
+          >
+            <div className="section-heading">
+              <div>
+                <div className="eyebrow">THE STORY SO FAR</div>
+                <h2 id="passport-history-heading">
+                  {passport.history.length
+                    ? `${passport.history.length} chapter${passport.history.length === 1 ? "" : "s"}${passport.nextCursor ? " loaded" : " and counting"}.`
+                    : "Just getting started."}
+                </h2>
+              </div>
+              <button
+                className="icon-button"
+                type="button"
+                disabled={loading}
+                aria-label="Refresh passport"
+                onClick={refresh}
+              >
+                <Icon
+                  name="refresh"
+                  size={18}
+                  className={loading ? "spin" : ""}
+                />
+              </button>
+            </div>
+            {passport.history.length ? (
+              <EvolutionTimeline events={passport.history} />
+            ) : (
+              <EmptyState
+                icon="spark"
+                title="The first chapter is on its way."
+                description="This Chog has a whole world ahead of it. Its accepted contributions and evolutions will appear here."
+              >
+                <Link className="button button-primary" href="/mint">
+                  Start a story of your own <Icon name="arrow" size={17} />
+                </Link>
+              </EmptyState>
+            )}
+            {moreError && <Notice tone="error">{moreError}</Notice>}
+            {passport.nextCursor && (
+              <button
+                type="button"
+                className="button button-secondary load-more"
+                disabled={loading || loadingMore}
+                onClick={() => void loadMore()}
+              >
+                {loadingMore ? "Loading more history…" : "Load more history"}
+                <Icon name="arrow" size={17} />
+              </button>
+            )}
+            <p className="history-caption">
+              This passport records finalized rewards and cosmetic changes.
+              Changing equipped traits does not award XP.
+            </p>
+          </section>
+        </div>
+      )}
+    </main>
+  );
 }

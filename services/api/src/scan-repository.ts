@@ -2,6 +2,15 @@ import type { Db } from "mongodb";
 import { randomUUID } from "node:crypto";
 
 export type ScanCheckpoint = { targets: Record<string, number> };
+export type ScanCoverage = {
+  mode: "recent_transactions" | "configured_events";
+  fromBlock: string | null;
+  toBlock: string | null;
+  fromTime: string | null;
+  toTime: string | null;
+  latestFinalizedBlock: string;
+  hasMore: boolean;
+};
 export type ScanTarget = {
   chainId: number;
   address: `0x${string}`;
@@ -16,21 +25,44 @@ export function scanTargetKey(target: ScanTarget) {
   return `${target.address.toLowerCase()}:${target.topic0.toLowerCase()}:${target.walletTopicIndex}`;
 }
 
+export type ActivityProof = {
+  chain_id: number;
+  wallet: string;
+  transaction_hash: string;
+  block_hash: string;
+  block_number: string;
+  block_timestamp: number;
+  transaction_from: string;
+  transaction_to: string | null;
+  transaction_nonce: number;
+  value_wei: string;
+  input: string;
+  receipt_status: "success";
+  confirmations_required: number;
+  interaction_type: "contract_call" | "configured_contract_event";
+  target_name: string;
+  target_address: string;
+  event_topic?: string;
+  event_wallet_topic?: number;
+  log_index: number;
+  verified_at: string;
+  destination_code_hash: string | null;
+};
+
 export class MongoScanRepository {
   constructor(private readonly db: Db) {}
 
-  async latestCheckpoint(profileId: string): Promise<ScanCheckpoint> {
+  async latestCheckpoint(
+    walletId: string,
+    chainId: number,
+  ): Promise<ScanCheckpoint> {
     const row = await this.db
       .collection<any>("scan_jobs")
       .find({
-        profile_id: profileId,
-        $or: [
-          { status: { $in: ["complete", "partial", "failed"] } },
-          {
-            status: "running",
-            updated_at: { $lt: new Date(Date.now() - 5 * 60_000) },
-          },
-        ],
+        wallet_id: walletId,
+        chain_id: chainId,
+        status: { $in: ["complete", "partial", "failed"] },
+        checkpoint_version: 2,
       })
       .sort({ updated_at: -1 })
       .limit(1)
@@ -48,9 +80,10 @@ export class MongoScanRepository {
     const now = new Date();
     await jobs.updateMany(
       {
-        profile_id: profileId,
+        wallet_id: walletId,
+        chain_id: chainId,
         status: "running",
-        updated_at: { $lt: new Date(now.getTime() - 5 * 60_000) },
+        updated_at: { $lt: new Date(now.getTime() - 90_000) },
       },
       {
         $set: {
@@ -68,11 +101,13 @@ export class MongoScanRepository {
       profile_id: profileId,
       chain_id: chainId,
       status: "running",
+      checkpoint_version: 2,
       checkpoint,
       attempts: 0,
       updated_at: now,
       created_at: now,
       last_error_code: null,
+      claim_ids: [],
     });
     return id;
   }
@@ -99,67 +134,78 @@ export class MongoScanRepository {
     );
   }
 
-  async saveEvents(
+  async saveCoverage(jobId: string, coverage: ScanCoverage) {
+    await this.db
+      .collection<any>("scan_jobs")
+      .updateOne({ _id: jobId }, { $set: { coverage } });
+  }
+
+  async saveCandidate(
     jobId: string,
     profileId: string,
-    chainId: number,
-    target: ScanTarget,
-    walletTopic: `0x${string}`,
-    logs: {
-      blockNumber: bigint;
-      transactionHash: `0x${string}`;
-      logIndex: number;
-      topics: readonly (`0x${string}` | null)[];
-    }[],
+    walletId: string,
+    proof: ActivityProof,
+    questSlug: string,
+    explorer: string,
   ) {
-    if (!logs.length) return;
-    const operations = logs.flatMap((log) => {
-      if (
-        !log.transactionHash ||
-        log.logIndex === null ||
-        log.topics[target.walletTopicIndex]?.toLowerCase() !==
-          walletTopic.toLowerCase()
-      )
-        return [];
-      const txUrl = target.explorerTxBase
-        ? `${target.explorerTxBase.replace(/\/$/, "")}/tx/${log.transactionHash}`
-        : null;
-      return [
-        {
-          updateOne: {
-            filter: {
-              profile_id: profileId,
-              chain_id: chainId,
-              tx_hash: log.transactionHash.toLowerCase(),
-              log_index: log.logIndex,
-            },
-            update: {
-              $setOnInsert: {
-                _id: randomUUID(),
-                scan_job_id: jobId,
-                profile_id: profileId,
-                chain_id: chainId,
-                target_address: target.address.toLowerCase(),
-                target_name: target.name,
-                quest_slug: target.questSlug ?? null,
-                tx_hash: log.transactionHash.toLowerCase(),
-                log_index: log.logIndex,
-                block_number: log.blockNumber.toString(),
-                matched_wallet_topic: target.walletTopicIndex,
-                topics: log.topics,
-                tx_url: txUrl,
-                observed_at: new Date(),
-              },
-            },
-            upsert: true,
-          },
+    const dedupeKey = `${walletId}:${proof.chain_id}:${proof.transaction_hash.toLowerCase()}:${proof.log_index}`;
+    await this.db.collection<any>("scan_events").updateOne(
+      { dedupe_key: dedupeKey },
+      {
+        $setOnInsert: {
+          _id: randomUUID(),
+          dedupe_key: dedupeKey,
+          scan_job_id: jobId,
+          wallet_id: walletId,
+          profile_id: profileId,
+          chain_id: proof.chain_id,
+          target_address: proof.target_address,
+          target_name: proof.target_name,
+          quest_slug: questSlug,
+          tx_hash: proof.transaction_hash.toLowerCase(),
+          log_index: proof.log_index,
+          block_number: proof.block_number,
+          block_number_sort: Number(proof.block_number),
+          tx_url: `${explorer.replace(/\/$/, "")}/tx/${proof.transaction_hash}`,
+          observed_at: new Date(),
+          verified_proof: proof,
         },
-      ];
-    });
-    if (operations.length)
-      await this.db
-        .collection<any>("scan_events")
-        .bulkWrite(operations, { ordered: false });
+        $addToSet: { scan_job_ids: jobId },
+      },
+      { upsert: true },
+    );
+  }
+
+  async pendingEvents(walletId: string, chainId: number) {
+    return this.db
+      .collection<any>("scan_events")
+      .find({
+        wallet_id: walletId,
+        chain_id: chainId,
+        verified_proof: { $exists: true },
+        claim_id: { $exists: false },
+      })
+      .sort({ block_number_sort: 1 })
+      .limit(12)
+      .toArray();
+  }
+
+  async attachClaim(jobId: string, eventId: string, claimId: string) {
+    await this.db
+      .collection<any>("scan_events")
+      .updateOne(
+        { _id: eventId },
+        { $set: { claim_id: claimId }, $unset: { review_error_code: "" } },
+      );
+    await this.db
+      .collection<any>("scan_jobs")
+      .updateOne({ _id: jobId }, { $addToSet: { claim_ids: claimId } });
+  }
+
+  async reviewError(eventId: string, errorCode: string) {
+    await this.db
+      .collection<any>("scan_events")
+      .updateOne({ _id: eventId }, { $set: { review_error_code: errorCode } });
   }
 
   async getForWallet(jobId: string, walletId: string) {
@@ -169,24 +215,35 @@ export class MongoScanRepository {
     if (!job) return null;
     const events = await this.db
       .collection<any>("scan_events")
-      .find({ scan_job_id: jobId })
-      .sort({ block_number: -1, log_index: -1 })
+      .find({
+        wallet_id: walletId,
+        $or: [{ scan_job_ids: jobId }, { scan_job_id: jobId }],
+      })
+      .sort({ block_number_sort: -1, log_index: -1 })
       .limit(200)
       .toArray();
     return {
-      id: job._id,
+      id: String(job._id),
+      profileId: String(job.profile_id),
+      chainId: job.chain_id,
       status: job.status,
       checkpoint: job.checkpoint,
-      updatedAt: job.updated_at.toISOString(),
+      updatedAt: new Date(job.updated_at).toISOString(),
+      createdAt: new Date(job.created_at).toISOString(),
+      coverage: job.coverage ?? null,
       lastErrorCode: job.last_error_code,
       errorCode: job.last_error_code,
+      claimIds: job.claim_ids ?? [],
       events: events.map((event) => ({
+        id: String(event._id),
         targetName: event.target_name,
         questSlug: event.quest_slug,
         txHash: event.tx_hash,
         blockNumber: event.block_number,
         transactionUrl: event.tx_url,
-        observedAt: event.observed_at.toISOString(),
+        observedAt: new Date(event.observed_at).toISOString(),
+        claimId: event.claim_id ?? null,
+        reviewErrorCode: event.review_error_code ?? null,
       })),
       candidateOnly: true as const,
     };
@@ -248,9 +305,7 @@ export function parseScanTargets(raw: string | undefined): ScanTarget[] {
   });
   if (
     new Set(
-      targets.map(
-        (target) => `${target.chainId}:${target.address.toLowerCase()}`,
-      ),
+      targets.map((target) => `${target.chainId}:${scanTargetKey(target)}`),
     ).size !== targets.length
   )
     throw new Error("duplicate_scan_target_address");

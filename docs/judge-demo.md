@@ -1,20 +1,16 @@
-# Judge walkthrough
+# Product walkthrough
 
-## Local orientation flow
+Use the deployed application with a real wallet and testnet MON. The public app has no simulated judge or developer walkthrough.
 
-1. Start MongoDB and the web/API/worker stack using `docs/deployment.md`.
-2. Open Evolution Lab and select **Local simulated walkthrough**.
-3. Submit an accepted, rejected, or pending sample. The interface keeps a persistent `SIMULATED` label and shows that no wallet, chain transaction, GenLayer decision, or ecosystem activity was verified.
-4. Refresh or revisit the returned scenario URL to confirm state persists. Repeat the same idempotency key to verify no duplicate reward.
-5. Try rejected/pending scenarios: neither awards XP nor changes the profile. The previous valid image remains visible.
+1. Read the illustrated story on `/` and choose **Mint a Chog**.
+2. Confirm the sign-in, network switch and mint in the wallet. The application retrieves the receipt, finds the NFT, registers the profile and submits its first review. No token ID or transaction hash needs to be entered.
+3. Visit `/profile` for owned Chogs, XP, level, traits and stats. Use **Find my Chogs** for an existing demo or original collection NFT. Connect an X profile by placing the supplied one-time code in its bio and verifying.
+4. Visit `/quests` for maintained quest requirements and review progress.
+5. On `/upgrade`, check recent Monad mainnet activity or submit an original X post/public GitHub repository with optional context. Preview the exact saved source and attached images, then submit that preview. X posts must belong to the linked account; GitHub's pinned README must contain wallet attribution.
+6. Wait for the real GenLayer review. `/claims/:id` shows the public source, numbered attempts and timeline; `/activity` links to pending and final outcomes. A positive finalized award updates XP and `/evolution` history. Artwork arrives after the worker finishes rendering.
+7. Equip or remove an earned accessory in `/profile`. Verify that XP is unchanged and the recorded before/after images appear in history. An original Chog keeps its source image beside separate companion art.
+8. Refresh during an in-flight mint and confirm that the same transaction resumes. Re-submit saved evidence and verify that it does not earn duplicate XP.
 
-## Real acceptance flow (after operator configuration)
+Provider configuration and deployed demo metadata setup are in [deployment.md](deployment.md). The local Playwright tests use isolated fixtures solely for verification; they are not user-facing demonstrations or evidence of live chain success.
 
-1. Connect wallet and switch to Monad testnet.
-2. Mint the separate demo ERC-721 and verify its collection address/token ID.
-3. Submit a quest whose source, dates, eligibility, evidence, and completion signal are documented in the registry.
-4. Inspect deterministic verification, GenLayer decision reference, and finality status.
-5. On finalized acceptance, inspect XP ledger, approved trait delta, generated artwork, published metadata, and Passport history.
-6. Resubmit the same evidence and confirm idempotent behavior.
-
-Until deployment inputs exist, steps in the real flow are configuration prerequisites rather than claimed live features.
+Daily contribution rewards are 75 XP once per wallet per UTC finalization day with a one-hour cooldown; additional accepted contributions grant zero. Use [mvp-release.md](mvp-release.md) for actual live references and outstanding gates.

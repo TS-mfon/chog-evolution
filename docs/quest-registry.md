@@ -25,15 +25,24 @@ Quests are data with versioned verification policies, not UI copy. A quest remai
 4. Use GenLayer only for interpretation and require validators to inspect the underlying evidence under the stored rules.
 5. Pause a quest when its source is unavailable or rules have changed. Keep historical policy versions for existing claims.
 
-## Initial registry
+## Maintained app quests — policy version 3
 
-The API seeds **Verify your X bio** as a versioned onboarding quest. The authenticated wallet creates a one-time code, places it in the claimed public profile bio, and the server resolves the username through X's User Lookup API and checks the returned description against the pending challenge. Evidence includes the stable provider user ID and the server-observed verification time. Clients cannot supply the evidence snapshot. The source is the [official X User Lookup documentation](https://docs.x.com/x-api/users/lookup/introduction), which documents username and ID lookup, requesting the public description field, bearer-token authentication, and the required developer account/app credentials. The source was reviewed on 2026-10-18. The quest awards 50 XP once per wallet, only after finalized GenLayer acceptance. Profile ownership proof does not establish any likes, follows, posts, views, or other engagement.
+The migration seeds these versioned evergreen application policies. They activate only with a usable public evidence base and a configured GenLayer adjudicator; the mint quest also requires the demo collection and X linking requires enabled anonymous public-page access. These are app-owned participation policies, not claims of third-party campaign endorsement.
 
-This quest depends on authorized X API lookup access. If the provider token is absent, the connection fails closed and the claim receives no evidence or XP. The source policy expires after 30 days without review.
+| Slug                     | Observable evidence                                                                              | Reward scope                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `demo-first-mint`        | Confirmed receipt, exact collection/token, mint-to-wallet event and current owner                | 50 XP once per wallet                                             |
+| `verify-x-bio`           | Anonymous public X bio containing the unique pending code and stable numeric account identity    | 50 XP once per wallet/X identity                                  |
+| `ecosystem-contribution` | Original, substantive Chog/Monad X post or pinned public GitHub README with verified attribution | 75 XP once per wallet per UTC finalization day; one-hour cooldown |
+| `monad-mainnet-explorer` | Successful finalized outbound Monad mainnet contract interaction                                 | 25 XP once per wallet per UTC block date                          |
+
+All awards require finalized GenLayer acceptance. Contribution source uniqueness applies globally across quests and profiles. After the daily award, further accepted contributions grant zero XP. The one-hour cooldown also applies across midnight. Mint and X-link remain once-only; linking an account alone is not an XP award. Source capture and scanning never directly award XP. Contributions must meet the stored substantive-content rules; a wallet address, marketing claim, copied repository or unsupported context is insufficient. Evidence snapshots are immutable and current NFT ownership is checked on submission.
+
+App-maintained policies use `sourceFreshness=maintained` and receive new versions when rules change. External campaigns still expire after 30 days without recorded source review. Keep old policy versions for already-submitted claims. A bio link proves control of an account, not social engagement.
 
 ## Research log — 2026-10-18
 
 - **Chogtober Week** — The [official Chogtober page](https://chog.zone/) describes a week of daily Monad ecosystem missions, including Chog-focused missions. The page could not be fetched reliably during this review, and the accessible search result did not establish exact dates, per-mission completion records, or an authoritative export/API. Keep inactive; do not infer completion from a wallet or social post.
 - **Chog product activity** — The [official Chog site](https://www.chog.xyz/) lists tools such as its PFP maker, NFT snapshot, swap, and meme maker. The site does not establish a dated quest or a completion signal suitable for awarding XP, so none is activated.
 
-Recheck these sources and obtain the actual mission rules and participant completion signal before adding a policy version. The current quest API intentionally returns an empty list until an operator creates a reviewed version.
+Recheck these sources and obtain the actual mission rules and participant completion signal before adding a policy version. The API returns only active usable policies; the maintained app quests above do not activate any unverified third-party campaign.

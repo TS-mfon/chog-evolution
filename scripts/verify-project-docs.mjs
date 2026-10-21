@@ -9,8 +9,11 @@ const files = [
   "docs/testing.md",
   "docs/architecture.md",
   "docs/implementation-checklist.md",
+  "docs/rebuild-release.md",
+  "docs/react-bits.md",
   ".env.example",
   ".github/workflows/evolution-worker.yml",
+  ".github/workflows/deploy-vercel.yml",
 ];
 const contents = Object.fromEntries(
   await Promise.all(
@@ -25,14 +28,31 @@ const requireText = (file, text) => {
 
 requireText("README.md", "npm run dev");
 requireText("README.md", "npm run db:migrate --workspace=@chog/api");
-requireText("docs/deployment.md", "ENABLE_LOCAL_DEMO_SCENARIOS=true");
-requireText("docs/deployment.md", "NEXT_PUBLIC_ENABLE_LOCAL_SIMULATION=true");
 requireText("docs/deployment.md", "Finalized");
 requireText(".env.example", "MONGODB_URI=");
-requireText(".env.example", "ENABLE_LOCAL_DEMO_SCENARIOS=false");
-requireText(".env.example", "NEXT_PUBLIC_ENABLE_LOCAL_SIMULATION=false");
+requireText(".env.example", "PUBLIC_API_PATH=/api");
+requireText(".env.example", "GITHUB_PUBLIC_READ_TOKEN=");
+requireText(".env.example", "SCAN_WALLET_LOOKBACK_BLOCKS=");
+requireText(".env.example", "MONAD_OWNER_PRIVATE_KEY=");
 requireText(".env.example", "ORIGINAL_CHOG_COLLECTION_ADDRESS=");
 requireText(".env.example", "GENLAYER_CONTRACT_ADDRESS=");
+requireText("docs/API.md", "POST /v1/mints/confirm");
+requireText("docs/API.md", "POST /v1/upgrades/evidence");
+requireText("docs/API.md", "GET /v1/metadata/demo/:tokenId");
+requireText("docs/react-bits.md", "config/codex-mcp.toml");
+requireText(".github/workflows/deploy-vercel.yml", "npm run test:browser");
+requireText(".github/workflows/deploy-vercel.yml", "GITHUB_PUBLIC_READ_TOKEN");
+for (const file of [".env.example", "docs/setup.md", "docs/deployment.md"]) {
+  if (
+    /ENABLE_LOCAL_DEMO_SCENARIOS=true|NEXT_PUBLIC_ENABLE_LOCAL_SIMULATION=true/.test(
+      contents[file],
+    )
+  ) {
+    failures.push(
+      `${file}: setup must not instruct users to enable simulation`,
+    );
+  }
+}
 requireText("docs/integrations.md", "workflow_dispatch");
 requireText("docs/integrations.md", "MONGODB_URI");
 requireText("docs/implementation-checklist.md", "Requirement / source");

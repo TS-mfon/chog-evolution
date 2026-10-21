@@ -1,0 +1,78 @@
+{
+  "source": "apps/web/app/styles.css",
+  "colors": {
+    "background": {
+      "hex": "#09070d",
+      "oklch": [0.1349, 0.0142, 301.1]
+    },
+    "surface": {
+      "hex": "#15101d",
+      "oklch": [0.186, 0.027, 301.5]
+    },
+    "elevated": {
+      "hex": "#21182e",
+      "oklch": [0.2314, 0.043, 302.0]
+    },
+    "text": {
+      "hex": "#faf7ff",
+      "oklch": [0.9807, 0.011, 303.1]
+    },
+    "muted": {
+      "hex": "#beb2cc",
+      "oklch": [0.7818, 0.0387, 306.3]
+    },
+    "subtle": {
+      "hex": "#a294b4",
+      "oklch": [0.6895, 0.0488, 305.0]
+    },
+    "border": {
+      "hex": "#594767",
+      "oklch": [0.4294, 0.0562, 309.8]
+    },
+    "control-border": {
+      "hex": "#7e6992",
+      "oklch": [0.5562, 0.0668, 307.7]
+    },
+    "accent": {
+      "hex": "#a779ff",
+      "oklch": [0.6818, 0.1921, 296.8]
+    },
+    "accent-ink": {
+      "hex": "#130b20",
+      "oklch": [0.1732, 0.0431, 299.5]
+    },
+    "success": {
+      "hex": "#a9d6ba",
+      "oklch": [0.8364, 0.0612, 157.5]
+    },
+    "warning": {
+      "hex": "#ecd39a",
+      "oklch": [0.8743, 0.0786, 87.0]
+    },
+    "danger": {
+      "hex": "#ffa9b5",
+      "oklch": [0.8219, 0.1022, 10.4]
+    },
+    "info": {
+      "hex": "#d2bcff",
+      "oklch": [0.8366, 0.0949, 299.4]
+    }
+  },
+  "text_contrast": {
+    "text/background": 18.91,
+    "text/surface": 17.63,
+    "text/elevated": 16.05,
+    "muted/background": 9.95,
+    "muted/surface": 9.28,
+    "muted/elevated": 8.45,
+    "subtle/background": 7.09,
+    "subtle/surface": 6.61,
+    "subtle/elevated": 6.02,
+    "accent-ink/accent": 6.22
+  },
+  "control_contrast": {
+    "background": 4.13,
+    "surface": 3.85,
+    "elevated": 3.5
+  }
+}

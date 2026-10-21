@@ -4,20 +4,37 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./capture": {
+      "types": "./dist/evidence-preview.d.ts",
+      "import": "./dist/evidence-preview.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./events": {
+      "types": "./dist/claim-events.d.ts",
+      "import": "./dist/claim-events.js"
+    },
+    "./metrics": {
+      "types": "./dist/operational-metrics.d.ts",
+      "import": "./dist/operational-metrics.js"
+    },
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "import": "./dist/config.js"
     }
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
     "check": "tsc --noEmit",
-    "test": "node --import tsx --test test/api.test.ts test/x-profile.test.ts test/scan.test.ts",
+    "test": "node --import tsx --test --test-isolation=none --test-reporter=tap test/*.test.ts",
     "start": "node dist/server.js",
     "db:migrate": "tsx src/migrate.ts"
   },
   "dependencies": {
+    "@chog/art-composition": "0.1.0",
     "@chog/evolution-rules": "0.1.0",
     "@chog/shared-types": "0.1.0",
     "@fastify/cookie": "^11.0.2",
@@ -25,6 +42,7 @@
     "@fastify/rate-limit": "^10.3.0",
     "fastify": "^5.6.1",
     "mongodb": "^7.7.0",
+    "sharp": "^0.35.5",
     "viem": "^2.38.5"
   },
   "devDependencies": {

@@ -1,0 +1,7 @@
+# Merge this server entry into ~/.codex/config.toml, or .codex/config.toml
+# when the host allows project configuration, then restart Codex.
+# Start the registry server inside the web workspace so components.json resolves.
+[mcp_servers.shadcn]
+command = "npx"
+args = ["shadcn@latest", "mcp"]
+cwd = "/home/sudodave/Chogins/apps/web"

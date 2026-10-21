@@ -1,29 +1,29 @@
-# Testing and verification record
+# Testing and verification
 
-## Commands
+Use Node 24 and the committed npm lockfile. [mvp-release.md](mvp-release.md) records current results. Host restrictions in [rebuild-release.md](rebuild-release.md) are historical; local HTTP, Chromium, Mongo and network access are available during this continuation.
 
-- `npm run check` — TypeScript checks across all workspaces.
-- `npm test` — API route/flow, X profile lookup, scan, artwork validation/reference, art composition, and progression tests.
-- `npm run build` — production TypeScript/Next builds across workspaces.
-- Live MongoDB integration tests require a reachable transaction-capable replica set.
-- `forge test --root contracts` — Foundry DemoChog tests.
-- `node scripts/verify-genlayer.mjs` — static contract guard checks.
-- `genvm-lint genlayer/ClaimAdjudicator.py` — GenVM contract lint, when the CLI is installed.
-- `node scripts/verify-application-integration.mjs`, `node scripts/verify-local-e2e.mjs` — source/route integration assertions; these do not launch a browser or prove provider E2E.
+| Command                                         | What it proves                                                                                                                                                                                                        |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm test`                                      | API, provider, recovery, progression, renderer and worker behavior with explicit doubles; real local signature cryptography.                                                                                          |
+| `npm run test:integration`                      | Actual Mongo replica-set transactions, indexes, concurrent signed sessions, ownership, source checkpoints, worker recovery, reward contention and GridFS publication.                                                 |
+| `npm run test:browser`                          | Fixture UI journeys, seven responsive routes, refresh/retry behavior, trait controls, history, account isolation and screenshots.                                                                                     |
+| `npm run test:browser:persistence`              | Browser through actual Fastify HTTP, repositories, Mongo and GridFS; signed test wallet, preview, pending/finalized reward, traits, reconnect and account isolation. External RPC/source/adjudication are controlled. |
+| `npm run test:browser:all`                      | Both browser suites, after a production build.                                                                                                                                                                        |
+| `node scripts/verify-mvp.mjs`                   | Production build and route assertions, workspace types, Solidity tests, GenVM checks, docs and five pinned reference hashes.                                                                                          |
+| `npm run check`, `npm run build`                | Individual TypeScript and production build checks.                                                                                                                                                                    |
+| `forge test --root contracts --offline`         | Demo contract tests with the cached compiler; run `forge build --root contracts` first on a clean toolchain.                                                                                                          |
+| `genvm-lint check genlayer/ClaimAdjudicator.py` | GenLayer AST and SDK semantic validation.                                                                                                                                                                             |
+| `node scripts/verify-project-docs.mjs`          | Setup, API, CI and release documentation contracts.                                                                                                                                                                   |
+| `npm run metadata:check`                        | Read-only deployed metadata inspection; `-- --apply` uses the owner signer and journals a real transaction.                                                                                                           |
 
-## Latest recorded evidence (2026-10-18)
+Persistence runners load optional `.env.integration` and require `MONGODB_TEST_URI`. Each run creates a random `chog_test_` name and ownership marker. Cleanup requires an exact database, suite and run ID match and is verified before success is emitted. Provider secrets and the default application database are removed from test environments.
 
-- `npm run check` passed across all workspaces.
-- `npm test` passed across API, worker artwork validation/reference, art composition, and progression suites.
-- `npm run build` passed, including optimized Next.js frontend and TypeScript API/worker builds.
-- `node scripts/verify-project-docs.mjs`, `node scripts/verify-application-integration.mjs`, `node scripts/verify-local-e2e.mjs`, `node scripts/verify-genlayer.mjs`, and `genvm-lint genlayer/ClaimAdjudicator.py` passed. The application integration and local E2E scripts use explicit simulated/test fixtures and are not live provider journeys.
-- MongoDB ping using the supplied URI failed; migrations, replica-set transactions, GridFS writes, and artifact readback could not be verified.
-- Monad Testnet endpoint checks confirmed chain ID `10143` via dRPC, but subsequent DNS/socket failures prevented account balance/gas estimation. No Monad transaction was submitted. The Foundry deployment script compiles; the guarded deploy script records before sending and refuses duplicate attempts.
-- GenLayer StudioNet (`chainId 61999`) accepted deployment transaction `0xe78797c0b016260027011617fa7866fdd45609a140670765457f5e485efdc163`, then finalized with `NO_MAJORITY`; no contract address was produced. The exact source hash and outcome are saved in `deployments/genlayer-studionet.json`. The SDK receipt endpoint was intermittently unreachable after finalization.
-- Gemini live image generation failed with `APIConnectionError`; no image artifact was produced or stored.
-- A credential-filtered publish copy was created and committed as `/tmp/chog-evolution-publish-20261018` (`21929e2`); it excludes `.env.build`, `mongodb.md`, and environment secrets. GitHub CLI's default config directory is read-only; a project-local `GH_CONFIG_DIR` is prepared, but GitHub login bootstrap cannot currently reach `github.com`. Vercel CLI 62.2.0 is now authenticated as `mfonante8-4360` in `.local-auth/vercel`. No frontend was deployed; the API has no deployed origin, so a frontend configured with localhost would not be a working deployment.
-- Browser wallet E2E, X API lookup, live GenLayer finality, and end-to-end claim-to-artwork are unverified. Static checks do not prove these integrations.
+Install Chromium with `npx playwright install chromium` or set `CHOG_CHROMIUM_EXECUTABLE`. Reports/screenshots are saved under `artifacts/browser/` and `artifacts/browser-persistence/`. The latter records seeded initial XP, awarded XP, ledger/history/artifact counts and cleanup. It supplies no canned application API responses: Playwright relays requests to the actual HTTP app.
 
-## Required live test prerequisites
+Fixture success is not live provider proof. Mongo acceptance uses controlled external services. Release acceptance also requires a real production wallet mint, finalized GenLayer decision, one reward, durable artwork, original-collection read-only checks, controlled X bio/post retrieval and metadata owner URI readback. Unavailable gates remain explicitly pending or handed off.
 
-Start a transaction-capable MongoDB replica set and run `npm run db:migrate --workspace=@chog/api` before live database verification. Live acceptance additionally needs a testnet-funded wallet and deployed demo contract, supported deployed GenLayer contract plus signer, configured X API bearer token for bio lookup, a verified active quest and evidence source, and Gemini credentials and MongoDB GridFS storage. Browser E2E tooling is not currently configured in this repository.
+CI creates a local Mongo replica set, runs persistent and browser acceptance before production migration/deployment, and uploads browser artifacts. Legacy `verify-application-integration.mjs` and `verify-local-e2e.mjs` are narrower API checks, not live E2E proof.
+
+## Live operator mint acceptance
+
+After schema-3 production readiness is verified, run `node --env-file=/absolute/path/to/operator.env scripts/verify-live.mjs` with `MONAD_OWNER_PRIVATE_KEY` set to the existing funded deployment owner. This performs one real testnet mint through production browser UI. An owner-private journal under ignored `artifacts/live/` stores the signed transaction and hash before broadcast; rerunning reconciles that same hash and never prepares a second mint. Browser refresh and HTTP observations are recorded separately from fixture acceptance. The script never links an X identity; the user signs in with their selected wallet on Profile for that check.

@@ -1,34 +1,46 @@
-# Provider integrations and live verification
+# Provider integrations
 
-This document separates code adapters from provider behavior that has actually been exercised.
+Local behavior tests use explicit test doubles. They do not establish that a provider, database, wallet or deployed contract is reachable. Actual Mongo/API acceptance uses isolated storage with controlled external providers. Current evidence is in [mvp-release.md](mvp-release.md).
 
-| Provider       | Implemented path                                                                       | Configuration                                                                               | Evidence / current limit                                                                                                |
-| -------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| EVM wallet     | Browser wallet discovery, connect, network display/switch, signed nonce authentication | Monad testnet public chain settings, API origin                                             | Source and unit/API tests exist; no real browser wallet journey run in this environment.                                |
-| Monad testnet  | DemoChog ERC-721 deployment, frontend mint/receipt flow, and API ownership verification | `MONAD_TESTNET_RPC_URL`, `DEMO_COLLECTION_ADDRESS`; frontend public counterparts            | Live deployment verified on 2026-10-18: `0x45119A32ca6C4d67424401dA92Abe4EC6c83f8Ce`, chain 10143, tx `0xe5d40c17743d7e19f6e7e0290386ee2519fe6eec929eef92f8cdca40daaf3218`. Receipt succeeded; code, name, symbol, max supply, and owner were read back. |
-| Original Chog  | `ownerOf` checks for the configured mainnet ERC-721 and companion profiles             | Mainnet RPC and user-supplied `ORIGINAL_CHOG_COLLECTION_ADDRESS`                            | Address is documented as Chog Genesis; RPC ownership call not exercised here. Companion does not mutate token metadata. |
-| X              | Public user lookup API verifies a temporary code in a profile bio                      | Server-only `X_API_BEARER_TOKEN`                                                            | This is not OAuth and does not retrieve posts/engagement. No bearer token is configured, so live lookup is unverified.  |
-| GenLayer       | Pinned `genlayer-js` adapter submits adjudication and worker polls to finality         | `GENLAYER_NETWORK`, `GENLAYER_RPC_URL`, `GENLAYER_CONTRACT_ADDRESS`, `GENLAYER_PRIVATE_KEY` | Contract lint passes. The only StudioNet deployment finalized as `NO_MAJORITY` with no contract. A retry in this environment was blocked before submission by Node DNS (`EAI_AGAIN studio.genlayer.com`); the configured signer is not proven usable with the GenLayer CLI because its keystore password was unavailable. Live adjudication remains blocked. |
-| Gemini         | Worker uses the supported `@google/genai` Interactions image-generation API            | `GEMINI_API_KEY`, `GEMINI_IMAGE_MODEL`                                                      | Generation and validation code is implemented; a live request and configured key are still needed for provider proof.   |
-| Object storage | MongoDB GridFS stores generated image and JSON metadata artifacts                      | `MONGODB_URI`, `MONGODB_DATABASE`                                                           | Durable artifact pipeline is implemented; live storage/readback requires the Mongo replica set to be reachable.         |
-| MongoDB        | Wallet auth, profiles, claims, quests, bio links, scans, decisions, XP and worker jobs | `MONGODB_URI`, `MONGODB_DATABASE`                                                           | API and scheduled worker use Mongo repositories; live connection/transaction flow is not verified in this environment.  |
+| Provider       | Implemented behavior                                                                                  | Configuration and limits                                                                                                             |
+| -------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| EVM wallet     | EIP-6963/EIP-1193 discovery, nonce sign-in, network switching, real mint request and refresh recovery | Browser wallet and testnet MON for network fees; receipts and NFT IDs are handled automatically                                      |
+| Monad Testnet  | Collection/supply checks, receipt finality, mint event and current-owner verification                 | `MONAD_TESTNET_RPC_URL`, `DEMO_COLLECTION_ADDRESS`, `MONAD_FINALITY_BLOCKS`                                                          |
+| Monad mainnet  | Original Chog discovery/ownership and recent successful outbound contract-call evidence               | `MONAD_MAINNET_RPC_URL`, `ORIGINAL_CHOG_COLLECTION_ADDRESS`; generic scans cover a bounded recent window                             |
+| X              | Bio-code account verification and public post lookup; author must match verified X identity           | Anonymous `X_SOURCE_MODE=public_page` by default, no OAuth/key; optional explicit `api` mode or unavailable-source `disabled` state  |
+| GitHub         | Public repository metadata, pinned commit and README with wallet attribution                          | Optional `GITHUB_PUBLIC_READ_TOKEN`; fixed API host, no redirects, bounded responses; forks/spam/nonrelevant work fail policy review |
+| GenLayer       | Owner-signed adjudication, stored submission reference, finality polling and decision validation      | Stable StudioNet alias; `GENLAYER_NETWORK`, `GENLAYER_RPC_URL`, `GENLAYER_CONTRACT_ADDRESS`, `GENLAYER_PRIVATE_KEY`                  |
+| Artwork        | Versioned trait-based PNG/JSON publication; optional Gemini generation                                | Built-in renderer without `GEMINI_API_KEY`; configured Gemini uses `GEMINI_IMAGE_MODEL` and retries failures                         |
+| MongoDB/GridFS | Sessions, claims, evidence, decisions, XP, checkpoints, history and persistent artifacts              | `MONGODB_URI`, `MONGODB_DATABASE`; Atlas or replica set for transactions                                                             |
 
-## GitHub Actions scheduled worker
+Public evidence URLs serve the exact content-hashed snapshot submitted to GenLayer; authentication messages and signatures stay private. `APP_ORIGIN` plus `PUBLIC_API_PATH=/api`, or an explicit `PUBLIC_API_URL`, must resolve to a publicly reachable HTTPS API for validators. User-written context is untrusted.
 
-`.github/workflows/evolution-worker.yml` runs a single bounded worker tick every five minutes and supports `workflow_dispatch`. It uses Mongo lease fields and workflow concurrency to avoid overlapping scheduled runs from this repository. The job does not apply migrations. Run migrations separately during deployment.
+## Monad scans
 
-Configure these GitHub repository variables:
+The default scanner reads up to `SCAN_WALLET_BLOCKS_PER_REQUEST=32` finalized mainnet blocks per request, starting within `SCAN_WALLET_LOOKBACK_BLOCKS=256` blocks on its first run. Later requests continue from checkpoints. The response and UI report coverage and whether more remains. Transaction success, sender, destination code and finality are verified before review. The maintained general participation policy caps rewards at 25 XP once per wallet per UTC day, across all owned Chogs.
 
-- `GENLAYER_NETWORK` — supported network key from the pinned SDK, such as `testnetBradbury` only if that is the intended deployed environment.
-- `GENLAYER_RPC_URL` — approved RPC endpoint.
-- `GENLAYER_CONTRACT_ADDRESS` — deployed adjudicator.
-- `GEMINI_IMAGE_MODEL` — optional approved Google image model; defaults to `gemini-3.1-flash-image`.
-- `MONGODB_DATABASE` — target database name.
+`MONAD_SCAN_TARGETS` optionally configures reviewed protocol event targets with contract, topic, indexed wallet position, start block and quest slug. Configured targets select event scanning instead of generic recent-transaction scanning. Matches follow the same GenLayer path; clicking rescan never awards XP. A standard RPC is not an indexed lifetime account history. See [quest-registry.md](quest-registry.md) for policy maintenance.
 
-Configure these GitHub Actions secrets:
+## Scheduled worker
 
-- `MONGODB_URI` — TLS-enabled MongoDB Atlas connection URI with only required access.
-- `GENLAYER_PRIVATE_KEY` — dedicated, funded service signer; never put it in a repository variable.
-- `GEMINI_API_KEY` — server-side Gemini API key. Without it, accepted XP is preserved and image jobs enter manual review after a bounded attempt.
+`.github/workflows/evolution-worker.yml` runs every five minutes and supports `workflow_dispatch`. Workflow concurrency plus database leases coordinate work. Each bounded `--once` invocation processes the configured claim batch plus capture and artwork work. Pending consensus does not consume failure retries. Ambiguous submissions are held for explicit finalized-state reconciliation and are never blindly resent. Source-unavailable claims may recapture the same logical source into an immutable numbered attempt. Local `npm run dev` keeps the worker running continuously.
 
-The scheduled workflow must be present on the repository's default branch. GitHub may delay scheduled runs under load. Check Actions run logs for missing-configuration failures. One tick claims at most one item; later runs continue queued work. Test manually with `workflow_dispatch` after adding the config. No successful scheduled run or provider operation is claimed until the Actions environment actually executes it.
+Configure GitHub Actions secrets:
+
+- `MONGODB_URI`: the transaction-capable database.
+- `GENLAYER_PRIVATE_KEY`: a funded signer matching the adjudicator owner.
+- `GEMINI_API_KEY`: optional, enables the external artwork provider.
+
+The workflow pins the existing StudioNet RPC/network/contract and public artifact path. Migrations run separately during deployment, never on every worker tick.
+
+Finalized decisions must match claim ID, quest, policy version, wallet, NFT identity and evidence hash and stay within the XP cap. One MongoDB transaction adds XP to the latest persisted profile and records history and an immutable artwork snapshot. Each positive claim creates at most one XP entry and one artwork job. Accepted zero-XP claims create neither. Optional equipment changes use independent source events and deterministic jobs without any XP. Earned optional traits do not automatically equip. A late render cannot overwrite a later evolution.
+
+## Historical evidence
+
+Manifests record Monad and GenLayer contract verification on 2026-10-18. That session also recorded production Mongo migrations/readiness, the Vercel alias, and successful scheduled worker run `39138193699`. Those observations do not verify this rebuild. A current real mint-to-finalized-decision-to-artwork journey, X lookup and Gemini generation remain unverified.
+
+## Sources, progression and operations
+
+X account binding uses the stable numeric provider ID and survives username changes. Unlinking does not free that ID for another wallet. Only submitted public posts are read; timeline ingestion is outside this MVP. Exact source text is frozen before media uploads; image checkpoints survive interruptions. Captured JPEG/PNG/WebP files are bounded and decoded for file integrity without semantic/vision analysis. Original NFT token metadata uses bounded public URL retrieval with private-network defenses and remains separate from companion modifications.
+
+Contributions grant 75 XP once per wallet per UTC finalization day, with a one-hour cooldown across midnight. Additional accepted contributions grant zero. Maintained mainnet participation remains 25 XP per UTC block date; mint and bio rewards remain once-only. Hourly bounded provider/job metrics exclude raw secrets and labels. Explicit schema-3 migration and `/ready` prevent serving an unmigrated database.

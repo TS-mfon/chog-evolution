@@ -1,9 +1,9 @@
 {
   "schema": "chog-reference-manifest-v1",
   "source": "user-supplied project assets/chog-references",
-  "upstreamRepository": null,
-  "upstreamCommit": null,
-  "provenance": "Local images supplied with the project. Upstream repository, commit, and licensing details were not included.",
+  "upstreamRepository": "https://github.com/TS-mfon/chog-evolution",
+  "upstreamCommit": "b1b273b58c37a09d96ff98de08a552df6623bd78",
+  "provenance": "User-supplied project reference images authorized for this implementation. All five hashes were verified against this existing repository revision. This pin identifies the supplied files, not their original creator or a separate license grant.",
   "references": [
     {
       "file": "reference-01.png",

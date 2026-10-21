@@ -1,15 +1,23 @@
+import { parsePage } from "./pagination.js";
+import {
+  recordOperationalMetric,
+  measureOperation,
+} from "./operational-metrics.js";
+import { ApiError } from "./config.js";
 import Fastify, { type FastifyInstance } from "fastify";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
-import rateLimit from "@fastify/rate-limit";
+import {
+  installRuntimeControls,
+  MAX_REQUEST_BYTES,
+} from "./runtime-controls.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { GridFSBucket, ObjectId } from "mongodb";
-import { createPublicClient, defineChain, http, parseAbi } from "viem";
+import { GridFSBucket, ObjectId, type Db } from "mongodb";
 import { MongoAuthRepository, type WalletSession } from "./auth-repository.js";
 import {
   closeDatabase,
   connectDatabase,
-  ensureIndexes,
+  SCHEMA_VERSION,
   getDatabase,
 } from "./mongo.js";
 import { MongoProfileRepository } from "./profile-repository.js";
@@ -19,13 +27,10 @@ import {
   type QuestPolicyInput,
 } from "./quest-admin-repository.js";
 import { MongoSocialRepository } from "./social-repository.js";
-import { lookupPublicXProfile } from "./x-profile.js";
-import {
-  MongoScanRepository,
-  parseScanTargets,
-  scanTargetKey,
-  type ScanCheckpoint,
-} from "./scan-repository.js";
+import { lookupXProfile } from "./x-profile.js";
+import { MongoScanRepository } from "./scan-repository.js";
+import { registerProductRoutes } from "./product-routes.js";
+import { ownsProfile, rpcClient, type ClientFactory } from "./config.js";
 import type { ScenarioRepository, ScenarioOutcome } from "./repository.js";
 
 const localDemoEnabled = () =>
@@ -39,31 +44,100 @@ const configuredWebOrigin = () => {
   return vercelHost ? `https://${vercelHost}` : "http://localhost:3000";
 };
 
-export function buildApp(repository?: ScenarioRepository): FastifyInstance {
-  const app = Fastify({ logger: true });
+export type AppOptions = {
+  database?: Db | null;
+  factory?: ClientFactory;
+  request?: typeof fetch;
+  logger?: boolean;
+};
+export function buildApp(
+  repository?: ScenarioRepository,
+  options: AppOptions = {},
+): FastifyInstance {
+  const app = Fastify({
+    bodyLimit: MAX_REQUEST_BYTES,
+    genReqId: (request) => {
+      const supplied = request.headers["x-request-id"];
+      return typeof supplied === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          supplied,
+        )
+        ? supplied
+        : randomUUID();
+    },
+    logger:
+      options.logger === false
+        ? false
+        : {
+            serializers: {
+              err: (error: any) => ({
+                type: "Error",
+                message: "Server error; details redacted",
+                stack: "",
+                code:
+                  typeof error?.code === "string" &&
+                  /^[A-Za-z0-9_]{1,80}$/.test(error.code)
+                    ? error.code
+                    : "internal_error",
+              }),
+            },
+            redact: [
+              "req.headers.authorization",
+              "req.headers.cookie",
+              "res.headers.set-cookie",
+              "err.config",
+              "err.request",
+              "err.url",
+            ],
+          },
+  });
   app.register(cors, {
     origin: configuredWebOrigin(),
     credentials: true,
   });
   app.register(cookie);
-  app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
   const mongo =
-    repository || !process.env.MONGODB_URI ? undefined : getDatabase();
+    options.database !== undefined
+      ? (options.database ?? undefined)
+      : repository || !process.env.MONGODB_URI
+        ? undefined
+        : getDatabase();
+  const factory = options.factory ?? rpcClient;
+  installRuntimeControls(app, mongo ? { database: mongo } : {});
+  app.addHook("onResponse", async (request, reply) => {
+    await recordOperationalMetric(mongo, {
+      kind: "request",
+      name: "http",
+      operation: "request",
+      outcome: reply.statusCode >= 500 ? "failure" : "success",
+      durationMs: reply.elapsedTime,
+    });
+  });
   const scenarios = repository;
   const auth = mongo ? new MongoAuthRepository(mongo) : undefined;
   const profiles = mongo ? new MongoProfileRepository(mongo) : undefined;
-  const claims = mongo ? new MongoClaimRepository(mongo) : undefined;
+  const claims = mongo
+    ? new MongoClaimRepository(mongo, factory, options.request ?? fetch)
+    : undefined;
   const questAdmin = mongo ? new MongoQuestAdminRepository(mongo) : undefined;
   const social = mongo ? new MongoSocialRepository(mongo) : undefined;
   const scans = mongo ? new MongoScanRepository(mongo) : undefined;
   app.addHook("onReady", async () => {
-    if (mongo) {
+    if (mongo && options.database === undefined) {
       await connectDatabase();
-      await ensureIndexes();
     }
   });
   app.addHook("onClose", async () => {
-    await closeDatabase();
+    if (options.database === undefined) await closeDatabase();
+  });
+  registerProductRoutes(app, {
+    mongo,
+    auth,
+    profiles,
+    claims,
+    scans,
+    factory,
+    request: options.request ?? fetch,
   });
 
   app.get("/health", async () => ({
@@ -73,26 +147,28 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
   }));
   app.get("/ready", async (_request, reply) => {
     if (!mongo)
-      return reply
-        .code(503)
-        .send({
-          status: "not_ready",
-          dependencies: { mongodb: "unconfigured" },
-        });
+      return reply.code(503).send({
+        status: "not_ready",
+        dependencies: { mongodb: "unconfigured" },
+      });
     try {
       await mongo.command({ ping: 1 });
+      const schema = await mongo
+        .collection<any>("schema_migrations")
+        .findOne({ _id: `mongodb-${SCHEMA_VERSION}` });
+      if (!schema)
+        return reply.code(503).send({ error: "schema_migration_required" });
       return {
         status: "ready",
         service: "chog-api",
+        schemaVersion: SCHEMA_VERSION,
         dependencies: { mongodb: "available" },
       };
     } catch {
-      return reply
-        .code(503)
-        .send({
-          status: "not_ready",
-          dependencies: { mongodb: "unavailable" },
-        });
+      return reply.code(503).send({
+        status: "not_ready",
+        dependencies: { mongodb: "unavailable" },
+      });
     }
   });
   app.post<{ Body: { address?: string; chainId?: number } }>(
@@ -125,6 +201,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
         );
         return reply.code(201).send(challenge);
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error({ err: error }, "Could not create wallet challenge");
         return reply.code(503).send({ error: "wallet_challenge_unavailable" });
       }
@@ -165,6 +243,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
           expiresAt: session.expiresAt,
         };
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error({ err: error }, "Could not verify wallet challenge");
         return reply
           .code(503)
@@ -185,6 +265,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
           }
         : reply.code(401).send({ error: "wallet_not_authenticated" });
     } catch (error) {
+      if (error instanceof ApiError)
+        return reply.code(error.status).send({ error: error.code });
       request.log.error({ err: error }, "Could not resolve wallet session");
       return reply.code(503).send({ error: "wallet_session_unavailable" });
     }
@@ -193,6 +275,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
     try {
       if (auth) await auth.revokeSession(request.cookies.chog_session);
     } catch (error) {
+      if (error instanceof ApiError)
+        return reply.code(error.status).send({ error: error.code });
       request.log.error({ err: error }, "Could not revoke wallet session");
       return reply.code(503).send({ error: "wallet_session_unavailable" });
     }
@@ -211,48 +295,46 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
     try {
       session = await auth.resolveSession(request.cookies.chog_session);
     } catch (error) {
+      if (error instanceof ApiError)
+        return reply.code(error.status).send({ error: error.code });
       request.log.error({ err: error }, "Could not validate wallet session");
       return reply.code(503).send({ error: "wallet_session_unavailable" });
     }
     if (!session)
       return reply.code(401).send({ error: "wallet_not_authenticated" });
     try {
-      const items = await profiles.listForWallet(session.walletId);
+      const page = await profiles.listPageForWallet(
+        session.walletId,
+        request.query,
+      );
+      const items = page.items;
       const current = [];
-      for (const item of items) {
-        const rpcUrl =
-          process.env[
-            item.nft.mode === "demo"
-              ? "MONAD_TESTNET_RPC_URL"
-              : "MONAD_MAINNET_RPC_URL"
-          ];
-        if (!rpcUrl)
-          return reply
-            .code(503)
-            .send({ error: "profile_ownership_rpc_unconfigured" });
-        const ownerClient = createPublicClient({
-          chain: defineChain({
-            id: item.nft.chainId,
-            name: "Monad",
-            nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
-            rpcUrls: { default: { http: [rpcUrl] } },
+      for (let offset = 0; offset < items.length; offset += 4) {
+        const verified = await Promise.all(
+          items.slice(offset, offset + 4).map(async (item) => {
+            if (
+              await ownsProfile(
+                {
+                  mode: item.nft.mode,
+                  chain_id: item.nft.chainId,
+                  collection_address: item.nft.collectionAddress,
+                  token_id: item.nft.tokenId,
+                },
+                session.address,
+                factory,
+              )
+            )
+              return profiles.captureOriginalMetadata(item, factory);
+            await profiles.releaseOwnership(session!.walletId, item.id);
+            return null;
           }),
-          transport: http(rpcUrl, { timeout: 10_000, retryCount: 2 }),
-        });
-        const owner = await ownerClient.readContract({
-          address: item.nft.collectionAddress,
-          abi: parseAbi([
-            "function ownerOf(uint256 tokenId) view returns (address)",
-          ]),
-          functionName: "ownerOf",
-          args: [BigInt(item.nft.tokenId)],
-        });
-        if (owner.toLowerCase() === session.address.toLowerCase())
-          current.push(item);
-        else await profiles.releaseOwnership(session.walletId, item.id);
+        );
+        current.push(...verified.filter((item) => item !== null));
       }
-      return { items: current };
+      return { items: current, nextCursor: page.nextCursor };
     } catch (error) {
+      if (error instanceof ApiError)
+        return reply.code(error.status).send({ error: error.code });
       request.log.error({ err: error }, "Could not load wallet profiles");
       return reply.code(503).send({ error: "profiles_unavailable" });
     }
@@ -267,11 +349,16 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
       if (!/^[0-9a-f-]{36}$/i.test(request.params.id))
         return reply.code(400).send({ error: "invalid_profile_id" });
       try {
-        const passport = await profiles.getPassport(request.params.id);
+        const passport = await profiles.getPassport(
+          request.params.id,
+          request.query,
+        );
         return passport
           ? { item: passport }
           : reply.code(404).send({ error: "passport_not_found" });
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error({ err: error }, "Could not load public passport");
         return reply.code(503).send({ error: "passport_unavailable" });
       }
@@ -293,12 +380,13 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
         if (!artifact)
           return reply.code(404).send({ error: "artifact_not_found" });
         const job = await mongo.collection<any>("evolution_jobs").findOne({
-          claim_id: artifact.claim_id,
+          ...(artifact.source_event_id
+            ? { source_event_id: artifact.source_event_id }
+            : { claim_id: artifact.claim_id }),
           artifact_id: artifact._id,
           status: "completed",
         });
-        if (!job)
-          return reply.code(404).send({ error: "artifact_not_found" });
+        if (!job) return reply.code(404).send({ error: "artifact_not_found" });
         const bucket = new GridFSBucket(mongo, {
           bucketName: "chog_artifacts",
         });
@@ -313,6 +401,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
         );
         return reply.send(bucket.openDownloadStream(id));
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error({ err: error }, "Could not read published artifact");
         return reply.code(503).send({ error: "artifact_unavailable" });
       }
@@ -334,6 +424,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
     try {
       return { item: await social.getXLink(session.walletId) };
     } catch (error) {
+      if (error instanceof ApiError)
+        return reply.code(error.status).send({ error: error.code });
       request.log.error({ err: error }, "Could not load X profile link");
       return reply.code(503).send({ error: "social_link_unavailable" });
     }
@@ -359,6 +451,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
           .code(201)
           .send(await social.createXChallenge(session.walletId));
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error({ err: error }, "Could not create X bio challenge");
         return reply.code(503).send({ error: "social_challenge_unavailable" });
       }
@@ -380,14 +474,18 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
       }
       if (!session)
         return reply.code(401).send({ error: "wallet_not_authenticated" });
-      const username = request.body?.username?.replace(/^@/, "");
+      const username =
+        typeof request.body?.username === "string"
+          ? request.body.username.replace(/^@/, "")
+          : undefined;
       if (!username || !/^[A-Za-z0-9_]{1,15}$/.test(username))
         return reply.code(400).send({ error: "valid_x_username_required" });
-      const bearerToken = process.env.X_API_BEARER_TOKEN;
-      if (!bearerToken)
-        return reply.code(503).send({ error: "x_api_unconfigured" });
       try {
-        const profile = await lookupPublicXProfile(username, bearerToken);
+        const profile = await measureOperation(
+          mongo,
+          { kind: "provider", name: "x", operation: "lookup" },
+          () => lookupXProfile(username, options.request ?? fetch),
+        );
         if (!profile)
           return reply.code(404).send({ error: "x_profile_not_found" });
         const result = await social.verifyXChallenge(
@@ -395,6 +493,7 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
           profile.username,
           profile.id,
           profile.description,
+          profile.source,
         );
         if (result.kind === "challenge_missing_or_expired")
           return reply
@@ -423,9 +522,11 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
           item: { username: profile.username, verifiedAt: result.verifiedAt },
         };
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error(
           { err: error },
-          "Could not verify X bio with the official API",
+          "Could not read X profile for bio verification",
         );
         return reply
           .code(503)
@@ -459,233 +560,12 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
       });
       return { linked: false };
     } catch (error) {
+      if (error instanceof ApiError)
+        return reply.code(error.status).send({ error: error.code });
       request.log.error({ err: error }, "Could not unlink X account");
       return reply.code(503).send({ error: "social_unlink_unavailable" });
     }
   });
-  app.post<{ Body: { profileId?: string } }>(
-    "/v1/scans",
-    { config: { rateLimit: { max: 2, timeWindow: "1 minute" } } },
-    async (request, reply) => {
-      if (!auth || !claims || !scans)
-        return reply.code(503).send({ error: "scan_database_unconfigured" });
-      let session: WalletSession | undefined;
-      try {
-        session = await auth.resolveSession(request.cookies.chog_session);
-      } catch {
-        return reply.code(503).send({ error: "wallet_session_unavailable" });
-      }
-      if (!session)
-        return reply.code(401).send({ error: "wallet_not_authenticated" });
-      const profileId = request.body?.profileId;
-      if (typeof profileId !== "string" || !/^[0-9a-f-]{36}$/i.test(profileId))
-        return reply.code(400).send({ error: "valid_profile_id_required" });
-      const profile = await claims.getProfileForWallet(
-        profileId,
-        session.walletId,
-      );
-      if (!profile)
-        return reply.code(404).send({ error: "profile_not_found_for_wallet" });
-      const rpcUrl =
-        process.env[
-          profile.mode === "demo"
-            ? "MONAD_TESTNET_RPC_URL"
-            : "MONAD_MAINNET_RPC_URL"
-        ];
-      if (!rpcUrl)
-        return reply.code(503).send({ error: "scan_rpc_unconfigured" });
-      let targets;
-      try {
-        targets = parseScanTargets(process.env.MONAD_SCAN_TARGETS);
-      } catch (error) {
-        request.log.error({ err: error }, "Invalid configured scan targets");
-        return reply.code(503).send({ error: "scan_targets_invalid" });
-      }
-      if (!targets.length)
-        return reply.code(503).send({ error: "scan_targets_unconfigured" });
-      const requestedMaxBlocks = Number(
-        process.env.SCAN_MAX_BLOCK_RANGE ?? 10_000,
-      );
-      const requestedChunkBlocks = Number(process.env.SCAN_CHUNK_BLOCKS ?? 500);
-      if (
-        !Number.isSafeInteger(requestedMaxBlocks) ||
-        requestedMaxBlocks < 100 ||
-        requestedMaxBlocks > 50_000 ||
-        !Number.isSafeInteger(requestedChunkBlocks) ||
-        requestedChunkBlocks < 50 ||
-        requestedChunkBlocks > 2_000
-      ) {
-        return reply
-          .code(503)
-          .send({ error: "scan_range_configuration_invalid" });
-      }
-      const maxBlocks = requestedMaxBlocks;
-      const chunkBlocks = requestedChunkBlocks;
-      let checkpoint: ScanCheckpoint | undefined;
-      let jobId: string | undefined;
-      try {
-        const chainId = Number(profile.chain_id);
-        targets = targets.filter((target) => target.chainId === chainId);
-        if (!targets.length)
-          return reply
-            .code(503)
-            .send({ error: "scan_targets_not_configured_for_profile_chain" });
-        const chain = defineChain({
-          id: chainId,
-          name: profile.mode === "demo" ? "Monad Testnet" : "Monad",
-          nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
-          rpcUrls: { default: { http: [rpcUrl] } },
-        });
-        const client = createPublicClient({
-          chain,
-          transport: http(rpcUrl, { timeout: 15_000, retryCount: 2 }),
-        });
-        const owner = await client.readContract({
-          address: profile.collection_address as `0x${string}`,
-          abi: parseAbi([
-            "function ownerOf(uint256 tokenId) view returns (address)",
-          ]),
-          functionName: "ownerOf",
-          args: [BigInt(profile.token_id)],
-        });
-        if (owner.toLowerCase() !== session.address.toLowerCase())
-          return reply
-            .code(403)
-            .send({ error: "nft_not_currently_owned_by_authenticated_wallet" });
-        const latestBlock = await client.getBlockNumber();
-        checkpoint = await scans.latestCheckpoint(profileId);
-        jobId = await scans.start(
-          session.walletId,
-          profileId,
-          chainId,
-          checkpoint,
-        );
-        const walletTopic =
-          `0x${session.address.toLowerCase().slice(2).padStart(64, "0")}` as `0x${string}`;
-        let allComplete = true;
-        for (const target of targets) {
-          const key = scanTargetKey(target);
-          const fromBlock = Math.max(
-            target.startBlock,
-            checkpoint.targets[key] ?? target.startBlock,
-          );
-          const toBlock = Math.min(
-            Number(latestBlock),
-            fromBlock + maxBlocks - 1,
-          );
-          if (fromBlock > Number(latestBlock)) {
-            checkpoint.targets[key] = Number(latestBlock) + 1;
-            continue;
-          }
-          for (let start = fromBlock; start <= toBlock; start += chunkBlocks) {
-            const end = Math.min(toBlock, start + chunkBlocks - 1);
-            const logs = await client.getLogs({
-              address: target.address,
-              fromBlock: BigInt(start),
-              toBlock: BigInt(end),
-            });
-            const matching = logs
-              .filter(
-                (log) =>
-                  log.topics[0]?.toLowerCase() ===
-                    target.topic0.toLowerCase() &&
-                  log.topics[target.walletTopicIndex]?.toLowerCase() ===
-                    walletTopic,
-              )
-              .flatMap((log) =>
-                log.transactionHash &&
-                log.logIndex !== null &&
-                log.blockNumber !== null
-                  ? [
-                      {
-                        blockNumber: log.blockNumber,
-                        transactionHash: log.transactionHash,
-                        logIndex: log.logIndex,
-                        topics: log.topics,
-                      },
-                    ]
-                  : [],
-              );
-            await scans.saveEvents(
-              jobId,
-              profileId,
-              chainId,
-              target,
-              walletTopic,
-              matching,
-            );
-            checkpoint.targets[key] = end + 1;
-            await scans.saveCheckpoint(jobId, checkpoint, "running");
-          }
-          if (toBlock < Number(latestBlock)) allComplete = false;
-        }
-        await scans.saveCheckpoint(
-          jobId,
-          checkpoint,
-          allComplete ? "complete" : "partial",
-        );
-        const item = await scans.getForWallet(jobId, session.walletId);
-        return reply.code(allComplete ? 200 : 202).send({
-          item,
-          candidateOnly: true,
-          next: allComplete
-            ? null
-            : "POST /v1/scans to continue from the saved block checkpoint",
-        });
-      } catch (error) {
-        request.log.error({ err: error }, "Monad ecosystem scan failed");
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          error.code === 11000
-        )
-          return reply.code(409).send({ error: "scan_already_running" });
-        if (checkpoint && jobId) {
-          try {
-            await scans.saveCheckpoint(
-              jobId,
-              checkpoint,
-              "failed",
-              "scan_rpc_or_storage_failure",
-            );
-          } catch {
-            /* preserve the original failure */
-          }
-        }
-        return reply.code(503).send({ error: "scan_unavailable" });
-      }
-    },
-  );
-  app.get<{ Params: { id: string } }>(
-    "/v1/scans/:id",
-    async (request, reply) => {
-      if (!auth || !scans)
-        return reply.code(503).send({ error: "scan_database_unconfigured" });
-      let session: WalletSession | undefined;
-      try {
-        session = await auth.resolveSession(request.cookies.chog_session);
-      } catch {
-        return reply.code(503).send({ error: "wallet_session_unavailable" });
-      }
-      if (!session)
-        return reply.code(401).send({ error: "wallet_not_authenticated" });
-      if (!/^[0-9a-f-]{36}$/i.test(request.params.id))
-        return reply.code(400).send({ error: "invalid_scan_id" });
-      try {
-        const item = await scans.getForWallet(
-          request.params.id,
-          session.walletId,
-        );
-        return item
-          ? { item, candidateOnly: true }
-          : reply.code(404).send({ error: "scan_not_found" });
-      } catch (error) {
-        request.log.error({ err: error }, "Could not load scan job");
-        return reply.code(503).send({ error: "scan_unavailable" });
-      }
-    },
-  );
   app.post<{
     Body: {
       mode?: string;
@@ -703,6 +583,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
       try {
         session = await auth.resolveSession(request.cookies.chog_session);
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error({ err: error }, "Could not validate wallet session");
         return reply.code(503).send({ error: "wallet_session_unavailable" });
       }
@@ -751,25 +633,18 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
           .send({ error: "nft_collection_identity_mismatch" });
       }
       try {
-        const chain = defineChain({
-          id: expectedChainId,
-          name: demoMode ? "Monad Testnet" : "Monad Mainnet",
-          nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
-          rpcUrls: { default: { http: [rpcUrl] } },
-        });
-        const client = createPublicClient({
-          chain,
-          transport: http(rpcUrl, { timeout: 10_000, retryCount: 2 }),
-        });
-        const owner = await client.readContract({
-          address: configuredCollection as `0x${string}`,
-          abi: parseAbi([
-            "function ownerOf(uint256 tokenId) view returns (address)",
-          ]),
-          functionName: "ownerOf",
-          args: [BigInt(tokenId)],
-        });
-        if (owner.toLowerCase() !== session.address.toLowerCase())
+        if (
+          !(await ownsProfile(
+            {
+              mode,
+              chain_id: expectedChainId,
+              collection_address: configuredCollection,
+              token_id: tokenId,
+            },
+            session.address,
+            factory,
+          ))
+        )
           return reply
             .code(403)
             .send({ error: "nft_not_owned_by_authenticated_wallet" });
@@ -781,6 +656,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
         });
         return reply.code(201).send({ item: profile });
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error(
           { err: error },
           "Could not verify NFT ownership or register profile",
@@ -794,8 +671,10 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
   app.get("/v1/quests", async (_request, reply) => {
     if (!claims) return { items: [] };
     try {
-      return { items: await claims.listActiveQuests() };
+      return await claims.listQuestsPage(_request.query);
     } catch (error) {
+      if (error instanceof ApiError)
+        return reply.code(error.status).send({ error: error.code });
       _request.log.error({ err: error }, "Could not load active quests");
       return reply.code(503).send({ error: "quest_registry_unavailable" });
     }
@@ -812,9 +691,15 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
       try {
         const item = await claims.getPublicEvidence(request.params.id);
         return item
-          ? reply.type("text/plain; charset=utf-8").send(item)
+          ? reply
+              .header("Cache-Control", "public, max-age=31536000, immutable")
+              .header("X-Content-Type-Options", "nosniff")
+              .type("text/plain; charset=utf-8")
+              .send(item)
           : reply.code(404).send({ error: "verified_evidence_not_found" });
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error(
           { err: error },
           "Could not resolve verified evidence reference",
@@ -823,6 +708,32 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
       }
     },
   );
+  app.get<{ Params: { id: string; attempt: string } }>(
+    "/v1/evidence/:id/attempts/:attempt",
+    async (request, reply) => {
+      if (!claims)
+        return reply
+          .code(503)
+          .send({ error: "evidence_database_unconfigured" });
+      if (
+        !/^[0-9a-f-]{36}$/i.test(request.params.id) ||
+        !/^[1-9]\d{0,2}$/.test(request.params.attempt)
+      )
+        return reply.code(400).send({ error: "invalid_evidence_reference" });
+      const text = await claims.getPublicEvidence(
+        request.params.id,
+        Number(request.params.attempt),
+      );
+      return text
+        ? reply
+            .header("Cache-Control", "public,max-age=31536000,immutable")
+            .header("X-Content-Type-Options", "nosniff")
+            .type("text/plain; charset=utf-8")
+            .send(text)
+        : reply.code(404).send({ error: "verified_evidence_not_found" });
+    },
+  );
+
   app.post<{
     Body: Partial<QuestPolicyInput> & { sourceReviewed?: boolean };
     Headers: { "x-quest-admin-key"?: string; "x-admin-actor"?: string };
@@ -885,7 +796,7 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
         rules.length > 4000 ||
         !Number.isSafeInteger(xpReward) ||
         xpReward! < 1 ||
-        xpReward! > 10000 ||
+        xpReward! > 75 ||
         !["public_evidence", "manual", "hybrid"].includes(
           verificationMethod ?? "",
         ) ||
@@ -953,6 +864,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
           sourceCheckedAt: new Date().toISOString(),
         });
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error(
           { err: error },
           "Could not create quest policy version",
@@ -981,8 +894,10 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
       if (!questAdmin)
         return reply.code(503).send({ error: "quest_database_unconfigured" });
       try {
-        return { items: await questAdmin.listManualReviews() };
+        return await questAdmin.listManualReviews(request.query);
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error({ err: error }, "Could not load manual review queue");
         return reply
           .code(503)
@@ -1046,6 +961,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
             .send({ error: "claim_not_in_manual_review_queue" });
         return { item: result };
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error({ err: error }, "Could not record manual review");
         return reply
           .code(503)
@@ -1065,152 +982,29 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
     if (!session)
       return reply.code(401).send({ error: "wallet_not_authenticated" });
     try {
-      return { items: await claims.listForWallet(session.walletId) };
+      return await claims.listPageForWallet(session.walletId, request.query);
     } catch (error) {
+      if (error instanceof ApiError)
+        return reply.code(error.status).send({ error: error.code });
       request.log.error({ err: error }, "Could not load wallet claims");
       return reply.code(503).send({ error: "claims_unavailable" });
     }
   });
-  app.post<{
-    Body: { profileId?: string; questId?: string; transactionHash?: string };
-    Headers: { "idempotency-key"?: string };
-  }>(
-    "/v1/claims",
-    { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } },
-    async (request, reply) => {
-      if (!auth || !claims)
-        return reply.code(503).send({ error: "claim_database_unconfigured" });
-      let session: WalletSession | undefined;
-      try {
-        session = await auth.resolveSession(request.cookies.chog_session);
-      } catch (error) {
-        request.log.error({ err: error }, "Could not validate claim session");
-        return reply.code(503).send({ error: "wallet_session_unavailable" });
-      }
-      if (!session)
-        return reply.code(401).send({ error: "wallet_not_authenticated" });
-      const { profileId, questId, transactionHash } = request.body ?? {};
-      const idempotencyKey = request.headers["idempotency-key"];
-      if (
-        !profileId ||
-        !/^[0-9a-f-]{36}$/i.test(profileId) ||
-        !questId ||
-        !/^[0-9a-f-]{36}$/i.test(questId) ||
-        !idempotencyKey ||
-        idempotencyKey.length > 200 ||
-        (transactionHash !== undefined &&
-          !/^0x[0-9a-fA-F]{64}$/.test(transactionHash))
-      ) {
-        return reply
-          .code(400)
-          .send({ error: "valid_claim_identity_and_idempotency_key_required" });
-      }
-      const profile = await claims.getProfileForWallet(
-        profileId,
-        session.walletId,
-      );
-      if (!profile)
-        return reply.code(404).send({ error: "profile_not_found_for_wallet" });
-      const ownershipChainId = Number(profile.chain_id);
-      const ownershipRpc =
-        process.env[
-          profile.mode === "demo"
-            ? "MONAD_TESTNET_RPC_URL"
-            : "MONAD_MAINNET_RPC_URL"
-        ];
-      if (!ownershipRpc)
-        return reply
-          .code(503)
-          .send({ error: "profile_ownership_rpc_unconfigured" });
-      try {
-        const ownerClient = createPublicClient({
-          chain: defineChain({
-            id: ownershipChainId,
-            name: "Monad",
-            nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
-            rpcUrls: { default: { http: [ownershipRpc] } },
-          }),
-          transport: http(ownershipRpc, { timeout: 10_000, retryCount: 2 }),
-        });
-        const currentOwner = await ownerClient.readContract({
-          address: profile.collection_address as `0x${string}`,
-          abi: parseAbi([
-            "function ownerOf(uint256 tokenId) view returns (address)",
-          ]),
-          functionName: "ownerOf",
-          args: [BigInt(profile.token_id)],
-        });
-        if (currentOwner.toLowerCase() !== session.address.toLowerCase())
-          return reply
-            .code(403)
-            .send({ error: "nft_not_currently_owned_by_authenticated_wallet" });
-      } catch (error) {
-        request.log.error(
-          { err: error },
-          "Could not recheck profile ownership",
-        );
-        return reply
-          .code(503)
-          .send({ error: "profile_ownership_verification_unavailable" });
-      }
-      try {
-        const result = await claims.createOrGet({
-          profileId,
-          questId,
-          walletId: session.walletId,
-          walletAddress: session.address,
-          idempotencyKey,
-          ...(transactionHash
-            ? { transactionHash: transactionHash as `0x${string}` }
-            : {}),
-        });
-        if (result.kind === "quest_unavailable")
-          return reply
-            .code(422)
-            .send({ error: "quest_inactive_or_policy_stale" });
-        if (result.kind === "evidence_host_not_allowed")
-          return reply
-            .code(422)
-            .send({ error: "evidence_host_not_allowed_by_quest_policy" });
-        if (result.kind === "evidence_unverified")
-          return reply.code(422).send({ error: "verified_bio_link_required" });
-        if (result.kind === "idempotency_conflict")
-          return reply
-            .code(409)
-            .send({ error: "idempotency_key_reused_with_different_claim" });
-        return reply.code(result.duplicate ? 200 : 202).send({
-          item: result.item,
-          duplicate: result.duplicate,
-          status: result.item.status,
-        });
-      } catch (error) {
-        request.log.error({ err: error }, "Could not persist claim");
-        return reply.code(503).send({ error: "claim_submission_unavailable" });
-      }
-    },
-  );
   app.get<{ Params: { id: string } }>(
     "/v1/claims/:id",
     async (request, reply) => {
-      if (!auth || !claims)
+      if (!claims)
         return reply.code(503).send({ error: "claim_database_unconfigured" });
-      let session: WalletSession | undefined;
+      if (!/^[0-9a-f-]{36}$/i.test(request.params.id))
+        return reply.code(400).send({ error: "invalid_claim_id" });
       try {
-        session = await auth.resolveSession(request.cookies.chog_session);
-      } catch {
-        return reply.code(503).send({ error: "wallet_session_unavailable" });
-      }
-      if (!session)
-        return reply.code(401).send({ error: "wallet_not_authenticated" });
-      try {
-        const item = await claims.getForWallet(
-          request.params.id,
-          session.walletId,
-        );
+        const item = await claims.getPublic(request.params.id);
         return item
           ? { item }
           : reply.code(404).send({ error: "claim_not_found" });
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error({ err: error }, "Could not load claim");
         return reply.code(503).send({ error: "claim_unavailable" });
       }
@@ -1254,6 +1048,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
         .code(result.duplicate ? 200 : 201)
         .send({ ...result.record, duplicate: result.duplicate });
     } catch (error) {
+      if (error instanceof ApiError)
+        return reply.code(error.status).send({ error: error.code });
       request.log.error({ err: error }, "Could not persist local scenario");
       return reply.code(503).send({
         error: "scenario_persistence_unavailable",
@@ -1283,6 +1079,8 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
               stateKind: "local_simulation",
             });
       } catch (error) {
+        if (error instanceof ApiError)
+          return reply.code(error.status).send({ error: error.code });
         request.log.error({ err: error }, "Could not load local scenario");
         return reply.code(503).send({
           error: "scenario_persistence_unavailable",
@@ -1294,4 +1092,3 @@ export function buildApp(repository?: ScenarioRepository): FastifyInstance {
   );
   return app;
 }
-

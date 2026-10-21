@@ -7,8 +7,11 @@ import { GridFSBucket, ObjectId, type Db } from "mongodb";
 import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
 import { composeDemoChog } from "@chog/art-composition";
+import { stageForXp, legacyEquipment } from "@chog/evolution-rules";
+import { measureOperation, recordOperationalMetric } from "@chog/api/metrics";
 
-const promptVersion = "chog-evolution-v1";
+const promptVersion = "chog-evolution-v2";
+export const REFERENCE_COMMIT = "b1b273b58c37a09d96ff98de08a552df6623bd78";
 const references = [
   [
     "reference-01.png",
@@ -33,6 +36,21 @@ const references = [
 ] as const;
 const digest = (data: Buffer) =>
   `0x${createHash("sha256").update(data).digest("hex")}`;
+
+export function artifactUrl(id: string, env: NodeJS.ProcessEnv = process.env) {
+  if (!/^[0-9a-f]{24}$/i.test(id)) throw new Error("invalid_artifact_id");
+  const explicit = env.PUBLIC_API_URL?.trim() || undefined;
+  const base =
+    explicit?.replace(/\/$/, "") ??
+    (env.PUBLIC_API_PATH ?? "/api").replace(/\/$/, "");
+  return `${base}/v1/artifacts/${id}`;
+}
+
+export function artworkVersionFilter(profileId: string, version: number) {
+  if (!Number.isSafeInteger(version) || version < 0)
+    throw new Error("invalid_artwork_version");
+  return { _id: profileId, version };
+}
 const readStream = async (stream: NodeJS.ReadableStream) => {
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(Buffer.from(chunk));
@@ -99,270 +117,381 @@ export async function validateGeneratedImage(raw: Buffer) {
   return image;
 }
 
-export async function processOneArtwork(db: Db): Promise<boolean> {
-  const now = new Date();
-  const workerToken = randomUUID();
+export type ArtworkOptions = {
+  generateImage?: (input: {
+    prompt: string;
+    continuity: Buffer;
+    references: ReturnType<typeof verifyReferenceAssets>;
+  }) => Promise<Buffer>;
+};
+
+/** Render from an immutable source event, then publish only to that profile version. */
+export async function processOneArtwork(
+  db: Db,
+  options: ArtworkOptions = {},
+): Promise<boolean> {
+  const now = new Date(),
+    workerToken = randomUUID();
   const jobs = db.collection<any>("evolution_jobs");
   const job = await jobs.findOneAndUpdate(
     {
       status: { $in: ["queued", "generating"] },
       $or: [{ lease_until: null }, { lease_until: { $lt: now } }],
+      $and: [
+        {
+          $or: [{ next_attempt_at: null }, { next_attempt_at: { $lte: now } }],
+        },
+      ],
     },
     {
       $set: {
         status: "generating",
         lease_token: workerToken,
-        lease_until: new Date(now.getTime() + 8 * 60_000),
+        lease_until: new Date(now.getTime() + 8 * 60000),
         updated_at: now,
       },
       $inc: { attempts: 1 },
     },
-    { sort: { created_at: 1 }, returnDocument: "after" },
+    { sort: { created_at: 1, _id: 1 }, returnDocument: "after" },
   );
   if (!job) return false;
-  const [claim, decision, profile] = await Promise.all([
-    db.collection<any>("claims").findOne({ _id: job.claim_id }),
-    db.collection<any>("decisions").findOne({ claim_id: job.claim_id }),
-    db.collection<any>("nft_profiles").findOne({ _id: job.profile_id }),
-  ]);
-  if (
-    !claim ||
-    claim.status !== "accepted" ||
-    !decision?.finalized ||
-    decision.outcome !== "accepted" ||
-    !profile
-  ) {
-    await jobs.updateOne(
-      { _id: job._id, lease_token: workerToken },
-      {
-        $set: {
-          status: "manual_review",
-          last_error_code: "finalized_accepted_decision_required",
-          lease_token: null,
-          lease_until: null,
-          updated_at: new Date(),
-        },
-      },
-    );
-    return true;
-  }
-  const storedArtifact = await db
-    .collection<any>("artifacts")
-    .findOne({ claim_id: claim._id });
-  if (storedArtifact) {
-    const session = db.client.startSession();
-    try {
-      await session.withTransaction(
-        async () => {
-          await db.collection<any>("nft_profiles").updateOne(
-            { _id: profile._id },
-            {
-              $set: {
-                artwork_artifact_id: storedArtifact._id,
-                artwork_url: storedArtifact.public_url,
-                updated_at: new Date(),
-              },
-            },
-            { session },
-          );
-          await jobs.updateOne(
-            { _id: job._id, lease_token: workerToken },
-            {
-              $set: {
-                status: "completed",
-                artifact_id: storedArtifact._id,
-                lease_token: null,
-                lease_until: null,
-                completed_at: new Date(),
-                updated_at: new Date(),
-              },
-            },
-            { session },
-          );
-        },
-        { writeConcern: { w: "majority" } },
-      );
-    } finally {
-      await session.endSession();
-    }
-    return true;
-  }
-  if (!process.env.GEMINI_API_KEY) {
-    await jobs.updateOne(
-      { _id: job._id, lease_token: workerToken },
-      {
-        $set: {
-          status: "manual_review",
-          last_error_code: "gemini_not_configured",
-          lease_token: null,
-          lease_until: null,
-          updated_at: new Date(),
-        },
-      },
-    );
-    return true;
-  }
   try {
-    const verifiedReferences = verifyReferenceAssets();
-    const priorArtifact = profile.artwork_artifact_id
-      ? await db
-          .collection<any>("artifacts")
-          .findOne({ _id: profile.artwork_artifact_id })
-      : null;
-    let continuityImage: Buffer;
-    let continuityMime = "image/png";
-    if (priorArtifact?.gridfs_id) {
-      continuityImage = await readStream(
-        new GridFSBucket(db, {
-          bucketName: "chog_artifacts",
-        }).openDownloadStream(new ObjectId(priorArtifact.gridfs_id)),
-      );
-      continuityMime = priorArtifact.mime_type;
-    } else {
-      const composition = composeDemoChog(
-        String(profile.token_id),
-        String(profile.stage),
-      );
-      continuityImage = await sharp(Buffer.from(composition.svg))
-        .png()
-        .toBuffer();
+    const [profile, history] = await Promise.all([
+      db.collection<any>("nft_profiles").findOne({ _id: job.profile_id }),
+      db
+        .collection<any>("evolution_history")
+        .findOne({
+          ...(job.source_event_id
+            ? { source_event_id: job.source_event_id }
+            : { claim_id: job.claim_id }),
+          profile_id: job.profile_id,
+          finalized: true,
+          outcome: "accepted",
+        }),
+    ]);
+    if (!profile || !history)
+      throw new Error("trusted_evolution_event_required");
+    const cosmetic = job.kind === "trait_change";
+    if (cosmetic && history.kind !== "trait_change")
+      throw new Error("trusted_trait_event_required");
+    const sourceEventId =
+      job.source_event_id ?? history.source_event_id ?? history._id;
+    const version = Number(job.evolution_version ?? history.new_version);
+    const authoritative = history.after ?? job.snapshot;
+    if (
+      !Number.isSafeInteger(version) ||
+      version < 1 ||
+      version !== history.new_version ||
+      !authoritative
+    )
+      throw new Error("evolution_snapshot_invalid");
+    const xp = Number(authoritative.xp ?? history.xp_total);
+    const stage = stageForXp(xp);
+    const equipped = authoritative.equippedTraitIds ?? legacyEquipment(xp);
+    if (
+      (authoritative.stage && authoritative.stage !== stage) ||
+      (job.snapshot?.xp !== undefined && job.snapshot.xp !== xp) ||
+      (job.snapshot?.equippedTraitIds &&
+        JSON.stringify(job.snapshot.equippedTraitIds) !==
+          JSON.stringify(equipped))
+    )
+      throw new Error("evolution_snapshot_invalid");
+    const level =
+      ["hatchling", "curious", "explorer", "veteran", "legend"].indexOf(stage) +
+      1;
+    let decision: any;
+    if (!cosmetic) {
+      const claim = await db
+        .collection<any>("claims")
+        .findOne({ _id: job.claim_id, status: "accepted" });
+      decision = await db
+        .collection<any>("decisions")
+        .findOne({
+          claim_id: job.claim_id,
+          finalized: true,
+          outcome: "accepted",
+        });
+      const ledger = await db
+        .collection<any>("xp_ledger")
+        .findOne({ claim_id: job.claim_id, amount: { $gt: 0 } });
+      if (!claim || !decision || !ledger || decision.xp_award < 1)
+        throw new Error("finalized_reward_required");
     }
-    const stage = String(profile.stage);
-    const composition = composeDemoChog(String(profile.token_id), stage);
-    const prompt = `Edit the Chog character in the continuity image into its ${stage} evolution. Keep the same recognizable face, eye placement, silhouette, quills, palette, and framing. Approved stage traits: ${JSON.stringify(composition.traits)}. Add only these approved traits while retaining identity. Use the other attached images solely as approved visual references for Chog's silhouette and style. Output one centered square character illustration, no text, no watermark, clean background. This is artwork only; do not infer eligibility, XP, ownership, or authoritative traits. Prompt ${promptVersion}.`;
-    const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-    const input = [
-      { type: "text" as const, text: prompt },
-      {
-        type: "image" as const,
-        mime_type: continuityMime,
-        data: continuityImage.toString("base64"),
-      },
-      ...verifiedReferences.map(({ buffer }) => ({
-        type: "image" as const,
-        mime_type: "image/png",
-        data: buffer.toString("base64"),
-      })),
-    ];
-    const result = await ai.interactions.create({
-      model: process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image",
-      input,
-      response_format: {
-        type: "image",
-        mime_type: "image/png",
-        aspect_ratio: "1:1",
-        image_size: "1K",
-      },
+    const composition = composeDemoChog(String(profile.token_id), stage, {
+      equippedTraitIds: equipped,
+      mode: profile.mode ?? "demo",
     });
-    if (!result.output_image?.data)
-      throw new Error("gemini_image_output_missing");
-    const raw = Buffer.from(result.output_image.data, "base64");
-    const image = await validateGeneratedImage(raw);
-    const bucket = new GridFSBucket(db, { bucketName: "chog_artifacts" });
-    const version = Number(profile.version ?? 0);
-    const imageFile = await store(
-      bucket,
-      image,
-      `${profile._id}-evolution-${version}.png`,
-      "image/png",
-      {
+    const identity = job.source_event_id
+      ? { source_event_id: sourceEventId }
+      : { claim_id: job.claim_id };
+    let artifact = await db.collection<any>("artifacts").findOne(identity);
+    if (
+      artifact &&
+      (artifact.profile_id !== profile._id ||
+        artifact.evolution_version !== version)
+    )
+      throw new Error("artifact_event_binding_invalid");
+    if (!artifact) {
+      const refs = verifyReferenceAssets();
+      const bucket = new GridFSBucket(db, { bucketName: "chog_artifacts" });
+      const imageId = new ObjectId(job.image_gridfs_id ?? undefined);
+      const metadataId = new ObjectId(job.metadata_gridfs_id ?? undefined);
+      const reserved = await jobs.updateOne(
+        { _id: job._id, lease_token: workerToken, status: "generating" },
+        {
+          $set: {
+            image_gridfs_id: imageId.toHexString(),
+            metadata_gridfs_id: metadataId.toHexString(),
+            source_event_id: sourceEventId,
+          },
+        },
+      );
+      if (!reserved.matchedCount) throw new Error("evolution_lease_lost");
+      let storedImage = await bucket.find({ _id: imageId }).limit(1).next();
+      if (!storedImage) {
+        // A prior crashed upload can leave chunks without a completed GridFS file.
+        await db
+          .collection("chog_artifacts.chunks")
+          .deleteMany({ files_id: imageId });
+        const model =
+          !cosmetic && (process.env.GEMINI_API_KEY || options.generateImage)
+            ? process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image"
+            : "chog-trait-renderer-v2";
+        let raw: Buffer;
+        if (
+          !cosmetic &&
+          (process.env.GEMINI_API_KEY || options.generateImage)
+        ) {
+          const prior = await db
+            .collection<any>("artifacts")
+            .find({
+              profile_id: profile._id,
+              evolution_version: { $lt: version },
+            })
+            .sort({ evolution_version: -1 })
+            .limit(1)
+            .next();
+          const continuity = prior?.gridfs_id
+            ? await readStream(
+                bucket.openDownloadStream(new ObjectId(prior.gridfs_id)),
+              )
+            : await sharp(Buffer.from(composition.svg)).png().toBuffer();
+          const prompt = `Evolve this Chog to ${stage}. Keep its recognizable face, silhouette, quills, colors and framing. Render only the authoritative traits ${JSON.stringify(composition.traits)}. Preserve its identity. Reference images establish Chog's visual language. Produce one square character illustration. The image never decides eligibility, XP or ownership. ${promptVersion}.`;
+          raw = await measureOperation(
+            db,
+            {
+              kind: "provider",
+              name: "gemini",
+              operation: "render",
+              attempt: job.attempts,
+            },
+            async () => {
+              if (options.generateImage)
+                return options.generateImage({
+                  prompt,
+                  continuity,
+                  references: refs,
+                });
+              const ai = new GoogleGenAI({
+                apiKey: process.env.GEMINI_API_KEY!,
+                httpOptions: { timeout: 120000 },
+              });
+              const result = await ai.interactions.create({
+                model,
+                input: [
+                  { type: "text", text: prompt },
+                  {
+                    type: "image",
+                    mime_type: "image/png",
+                    data: continuity.toString("base64"),
+                  },
+                  ...refs.map((ref) => ({
+                    type: "image" as const,
+                    mime_type: "image/png" as const,
+                    data: ref.buffer.toString("base64"),
+                  })),
+                ],
+                response_format: {
+                  type: "image",
+                  mime_type: "image/png",
+                  aspect_ratio: "1:1",
+                  image_size: "1K",
+                },
+              });
+              if (!result.output_image?.data)
+                throw new Error("gemini_image_output_missing");
+              return Buffer.from(result.output_image.data, "base64");
+            },
+          );
+        } else
+          raw = await sharp(Buffer.from(composition.svg))
+            .resize(1024, 1024)
+            .png()
+            .toBuffer();
+        const image = await validateGeneratedImage(raw);
+        const provenance = {
+          model,
+          promptVersion,
+          referenceCommit: REFERENCE_COMMIT,
+          referenceHashes: refs.map((ref) => ref.sha256),
+          generatedAt: new Date().toISOString(),
+        };
+        await new Promise<void>((resolveUpload, reject) => {
+          const stream = bucket.openUploadStreamWithId(
+            imageId,
+            `${profile._id}-evolution-${version}.png`,
+            {
+              metadata: {
+                profile_id: profile._id,
+                source_event_id: sourceEventId,
+                evolution_version: version,
+                contentType: "image/png",
+                sha256: digest(image),
+                provenance,
+              },
+            },
+          );
+          stream.once("error", reject);
+          stream.once("finish", () => resolveUpload());
+          stream.end(image);
+        });
+        storedImage = await bucket.find({ _id: imageId }).limit(1).next();
+      }
+      if (
+        !storedImage ||
+        storedImage.metadata?.source_event_id !== sourceEventId ||
+        storedImage.metadata?.evolution_version !== version ||
+        !/^0x[0-9a-f]{64}$/.test(storedImage.metadata?.sha256 ?? "")
+      )
+        throw new Error("stored_artwork_binding_invalid");
+      const publicUrl = artifactUrl(imageId.toHexString());
+      const metadata = {
+        schema: "chog-artifact-v2",
+        profileId: profile._id,
+        sourceEventId,
+        kind: cosmetic ? "trait_change" : "claim",
+        ...(!cosmetic
+          ? {
+              claimId: job.claim_id,
+              decisionReference: decision.decision_reference,
+            }
+          : {}),
+        evolutionVersion: version,
+        xp,
+        level,
+        stage,
+        equippedTraitIds: equipped,
+        traits: composition.traits,
+        image: {
+          url: publicUrl,
+          sha256: storedImage.metadata.sha256,
+          bytes: storedImage.length,
+          mimeType: "image/png",
+        },
+        provenance: storedImage.metadata.provenance,
+      };
+      const metadataBytes = Buffer.from(JSON.stringify(metadata));
+      const storedMetadata = await bucket
+        .find({ _id: metadataId })
+        .limit(1)
+        .next();
+      if (!storedMetadata) {
+        await db
+          .collection("chog_artifacts.chunks")
+          .deleteMany({ files_id: metadataId });
+        await new Promise<void>((resolveUpload, reject) => {
+          const stream = bucket.openUploadStreamWithId(
+            metadataId,
+            `${profile._id}-evolution-${version}.json`,
+            {
+              metadata: {
+                profile_id: profile._id,
+                source_event_id: sourceEventId,
+                contentType: "application/json",
+                sha256: digest(metadataBytes),
+              },
+            },
+          );
+          stream.once("error", reject);
+          stream.once("finish", () => resolveUpload());
+          stream.end(metadataBytes);
+        });
+      } else if (storedMetadata.metadata?.sha256 !== digest(metadataBytes))
+        throw new Error("stored_artifact_metadata_invalid");
+      artifact = {
+        _id: randomUUID(),
         profile_id: profile._id,
-        claim_id: claim._id,
-        decision_reference: decision.decision_reference,
-        kind: "evolution_artwork",
-      },
-    );
-    const artifactId = randomUUID();
-    const artifact = {
-      schema: "chog-artifact-v1",
-      profileId: profile._id,
-      claimId: claim._id,
-      decisionReference: decision.decision_reference,
-      evolutionVersion: version,
-      xp: profile.xp,
-      level: profile.level,
-      stage,
-      traits: composition.traits,
-      image: {
-        url: `/v1/artifacts/${imageFile.id}`,
-        sha256: imageFile.sha256,
-        bytes: imageFile.size,
-        mimeType: "image/png",
-      },
-      provenance: {
-        model: process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image",
-        promptVersion,
-        referenceHashes: verifiedReferences.map((ref) => ref.sha256),
-        generatedAt: new Date().toISOString(),
-      },
-    };
-    const metadataFile = await store(
-      bucket,
-      Buffer.from(JSON.stringify(artifact)),
-      `${profile._id}-evolution-${version}.json`,
-      "application/json",
-      {
-        profile_id: profile._id,
-        claim_id: claim._id,
-        kind: "evolution_metadata",
-      },
-    );
-    await db.collection<any>("artifacts").insertOne({
-      _id: artifactId,
-      profile_id: profile._id,
-      claim_id: claim._id,
-      gridfs_id: imageFile.id,
-      metadata_gridfs_id: metadataFile.id,
-      image_hash: imageFile.sha256,
-      metadata_hash: metadataFile.sha256,
-      mime_type: "image/png",
-      public_url: `/v1/artifacts/${imageFile.id}`,
-      metadata_url: `/v1/artifacts/${metadataFile.id}`,
-      provenance: artifact.provenance,
-      created_at: new Date(),
-    });
+        source_event_id: sourceEventId,
+        kind: cosmetic ? "trait_change" : "claim",
+        ...(!cosmetic ? { claim_id: job.claim_id } : {}),
+        evolution_version: version,
+        gridfs_id: imageId.toHexString(),
+        metadata_gridfs_id: metadataId.toHexString(),
+        image_hash: storedImage.metadata.sha256,
+        metadata_hash: digest(metadataBytes),
+        mime_type: "image/png",
+        public_url: publicUrl,
+        metadata_url: artifactUrl(metadataId.toHexString()),
+        provenance: metadata.provenance,
+        created_at: new Date(),
+      };
+    }
     const session = db.client.startSession();
     try {
       await session.withTransaction(
         async () => {
-          const currentJob = await jobs.findOne(
+          const held = await jobs.findOne(
             { _id: job._id, lease_token: workerToken, status: "generating" },
             { session },
           );
-          if (!currentJob) throw new Error("evolution_lease_lost");
-          await db.collection<any>("nft_profiles").updateOne(
-            { _id: profile._id },
-            {
-              $set: {
-                artwork_artifact_id: artifactId,
-                artwork_url: `/v1/artifacts/${imageFile.id}`,
-                updated_at: new Date(),
+          if (!held) throw new Error("evolution_lease_lost");
+          const existing = await db
+            .collection<any>("artifacts")
+            .findOne(identity, { session });
+          if (existing) artifact = existing;
+          else
+            await db
+              .collection<any>("artifacts")
+              .insertOne(artifact, { session });
+          await db
+            .collection<any>("nft_profiles")
+            .updateOne(
+              artworkVersionFilter(profile._id, version),
+              {
+                $set: {
+                  artwork_artifact_id: artifact._id,
+                  artwork_url: artifact.public_url,
+                  artwork_version: version,
+                  updated_at: new Date(),
+                },
               },
-            },
-            { session },
-          );
-          await db.collection<any>("audit_events").insertOne(
-            {
-              _id: randomUUID(),
-              entity_type: "claim",
-              entity_id: claim._id,
-              action: "artwork_published",
-              request_id: decision.decision_reference,
-              details: {
-                artifact_id: artifactId,
-                image_hash: imageFile.sha256,
-                metadata_hash: metadataFile.sha256,
+              { session },
+            );
+          // Only publication fields are filled after the immutable event snapshot is saved.
+          await db
+            .collection<any>("evolution_history")
+            .updateOne(
+              { _id: history._id, new_version: version },
+              { $set: { "after.artworkUrl": artifact.public_url } },
+              { session },
+            );
+          await db
+            .collection<any>("evolution_history")
+            .updateOne(
+              {
+                profile_id: profile._id,
+                previous_version: version,
+                "before.artworkUrl": null,
               },
-              created_at: new Date(),
-            },
-            { session },
-          );
+              { $set: { "before.artworkUrl": artifact.public_url } },
+              { session },
+            );
           await jobs.updateOne(
             { _id: job._id, lease_token: workerToken },
             {
               $set: {
                 status: "completed",
-                artifact_id: artifactId,
+                artifact_id: artifact._id,
                 lease_token: null,
                 lease_until: null,
                 completed_at: new Date(),
@@ -371,35 +500,61 @@ export async function processOneArtwork(db: Db): Promise<boolean> {
             },
             { session },
           );
+          await db
+            .collection<any>("audit_events")
+            .insertOne(
+              {
+                _id: randomUUID(),
+                entity_type: "evolution",
+                entity_id: sourceEventId,
+                action: "artwork_published",
+                details: {
+                  artifact_id: artifact._id,
+                  image_hash: artifact.image_hash,
+                  version,
+                },
+                created_at: new Date(),
+              },
+              { session },
+            );
         },
         { writeConcern: { w: "majority" } },
       );
     } finally {
       await session.endSession();
     }
+    await recordOperationalMetric(db, {
+      kind: "job",
+      name: "artwork",
+      operation: "render",
+      outcome: "success",
+      durationMs: Date.now() - now.getTime(),
+      attempt: job.attempts,
+    });
     console.info(
       JSON.stringify({
         event: "evolution_artwork_published",
         jobId: job._id,
+        sourceEventId,
         profileId: profile._id,
-        artifactId,
-        imageHash: imageFile.sha256,
+        artifactId: artifact._id,
+        version,
       }),
     );
   } catch (error) {
-    const attempts = Number(job.attempts ?? 1);
-    const retry = attempts < 3;
+    const code =
+      error instanceof Error && /^[a-z][a-z0-9_]{0,100}$/.test(error.message)
+        ? error.message
+        : "artwork_provider_unavailable";
+    const retry = Number(job.attempts) < 3;
     await jobs.updateOne(
       { _id: job._id, lease_token: workerToken },
       {
         $set: {
           status: retry ? "queued" : "manual_review",
-          last_error_code:
-            error instanceof Error
-              ? error.message.slice(0, 120)
-              : "artwork_generation_failed",
+          last_error_code: code,
           next_attempt_at: retry
-            ? new Date(Date.now() + Math.min(3_600_000, 30_000 * 2 ** attempts))
+            ? new Date(Date.now() + 30000 * 2 ** Number(job.attempts))
             : null,
           lease_token: null,
           lease_until: null,
@@ -407,11 +562,19 @@ export async function processOneArtwork(db: Db): Promise<boolean> {
         },
       },
     );
+    await recordOperationalMetric(db, {
+      kind: "job",
+      name: "artwork",
+      operation: "render",
+      outcome: "failure",
+      durationMs: Date.now() - now.getTime(),
+      attempt: job.attempts,
+    });
     console.error(
       JSON.stringify({
         event: retry ? "artwork_retry_scheduled" : "artwork_manual_review",
         jobId: job._id,
-        code: error instanceof Error ? error.message : "unknown",
+        code,
       }),
     );
   }

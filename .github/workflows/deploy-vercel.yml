@@ -15,19 +15,74 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
+      - name: Prepare contract checks
+        run: |
+          forge build --root contracts
+          python3 -m venv /tmp/chog-genvm-tools
+          /tmp/chog-genvm-tools/bin/pip install genvm-lint==0.11.0
+          echo "/tmp/chog-genvm-tools/bin" >> "$GITHUB_PATH"
+      - name: Test and build application
+        run: |
+          npm test
+          node scripts/verify-mvp.mjs
+      - name: Start isolated MongoDB replica set
+        run: |
+          docker run --detach --name chog-acceptance-mongo --publish 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for attempt in $(seq 1 40); do
+            if docker exec chog-acceptance-mongo mongosh --quiet --eval 'db.adminCommand({ping:1}).ok' >/dev/null; then break; fi
+            sleep 1
+          done
+          docker exec chog-acceptance-mongo mongosh --quiet --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+          for attempt in $(seq 1 40); do
+            if docker exec chog-acceptance-mongo mongosh --quiet --eval 'if (!db.hello().isWritablePrimary) quit(1)' >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Verify persistent transactions and recovery
+        run: npm run test:integration
+        env:
+          MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+      - name: Install browser for acceptance checks
+        run: npx playwright install --with-deps chromium
+      - name: Check fixture UI and real API browser persistence
+        run: npm run test:browser:all
+        env:
+          MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+      - name: Save browser acceptance artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-acceptance
+          path: |
+            artifacts/browser/
+            artifacts/browser-persistence/
+          if-no-files-found: ignore
       - name: Apply MongoDB migrations
         run: npm run db:migrate --workspace=@chog/api
         env:
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           MONGODB_DATABASE: chog_evolution
+          APP_ORIGIN: https://chog-evolution.vercel.app
+          WEB_ORIGIN: https://chog-evolution.vercel.app
+          PUBLIC_API_PATH: /api
+          GENLAYER_CONTRACT_ADDRESS: "0x73Bd1106FFa722cf8e71A04f612ee868CDCd2396"
+          MONAD_TESTNET_RPC_URL: https://testnet-rpc.monad.xyz
+          DEMO_COLLECTION_ADDRESS: "0x45119A32ca6C4d67424401dA92Abe4EC6c83f8Ce"
+          MONAD_MAINNET_RPC_URL: https://rpc.monad.xyz
+          ORIGINAL_CHOG_COLLECTION_ADDRESS: "0xc96d31F8626c6D03Fae5dCD3d61e3FB9F4a73763"
+          X_SOURCE_MODE: ${{ vars.X_SOURCE_MODE || 'public_page' }}
+          X_API_BEARER_TOKEN: ${{ secrets.X_API_BEARER_TOKEN }}
       - name: Link Vercel project
         run: npx vercel link --yes --project chog-evolution --token "$VERCEL_TOKEN"
         env:
@@ -43,10 +98,16 @@ jobs:
           }
           set_env MONGODB_URI "$MONGODB_URI"
           set_env MONGODB_DATABASE "chog_evolution"
+          set_env APP_ORIGIN "https://chog-evolution.vercel.app"
+          set_env WEB_ORIGIN "https://chog-evolution.vercel.app"
+          set_env PUBLIC_API_PATH "/api"
           set_env GEMINI_API_KEY "$GEMINI_API_KEY"
           set_env GEMINI_IMAGE_MODEL "gemini-3.1-flash-image"
           set_env NEXT_PUBLIC_API_BASE_URL "/api"
-          set_env NEXT_PUBLIC_ENABLE_LOCAL_SIMULATION "false"
+          set_env X_SOURCE_MODE "$X_SOURCE_MODE"
+          if [ -n "$QUEST_ADMIN_API_KEY" ]; then set_env QUEST_ADMIN_API_KEY "$QUEST_ADMIN_API_KEY"; fi
+          if [ -n "$X_API_BEARER_TOKEN" ]; then set_env X_API_BEARER_TOKEN "$X_API_BEARER_TOKEN"; fi
+          if [ -n "$GITHUB_PUBLIC_READ_TOKEN" ]; then set_env GITHUB_PUBLIC_READ_TOKEN "$GITHUB_PUBLIC_READ_TOKEN"; fi
           set_env NEXT_PUBLIC_MONAD_TESTNET_CHAIN_ID "10143"
           set_env NEXT_PUBLIC_MONAD_TESTNET_RPC_URL "https://testnet-rpc.monad.xyz"
           set_env NEXT_PUBLIC_MONAD_TESTNET_EXPLORER_URL "https://testnet.monadscan.com"
@@ -67,6 +128,10 @@ jobs:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           MONGODB_URI: ${{ secrets.MONGODB_URI }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          X_API_BEARER_TOKEN: ${{ secrets.X_API_BEARER_TOKEN }}
+          GITHUB_PUBLIC_READ_TOKEN: ${{ secrets.GITHUB_PUBLIC_READ_TOKEN }}
+          X_SOURCE_MODE: ${{ vars.X_SOURCE_MODE || 'public_page' }}
+          QUEST_ADMIN_API_KEY: ${{ secrets.QUEST_ADMIN_API_KEY }}
       - name: Deploy production
         run: npx vercel deploy --prod --yes --token "$VERCEL_TOKEN"
         env:
@@ -77,5 +142,5 @@ jobs:
           set -euo pipefail
           ready="$(curl --fail --silent --show-error --retry 5 --retry-all-errors https://chog-evolution.vercel.app/api/ready)"
           quests="$(curl --fail --silent --show-error --retry 5 --retry-all-errors https://chog-evolution.vercel.app/api/v1/quests)"
-          printf '%s' "$ready" | jq -e '.status == "ready" and .dependencies.mongodb == "available"'
+          printf '%s' "$ready" | jq -e '.status == "ready" and .schemaVersion == 3 and .dependencies.mongodb == "available"'
           printf '%s' "$quests" | jq -e '.items | length > 0'
