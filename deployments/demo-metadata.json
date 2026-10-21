@@ -1,0 +1,11 @@
+{
+  "chainId": 10143,
+  "collection": "0x45119A32ca6C4d67424401dA92Abe4EC6c83f8Ce",
+  "metadataBase": "https://chog-evolution.vercel.app/api/v1/metadata/demo/",
+  "owner": "0xEd9EDd8586b20524CafA4F568413C504C9B03172",
+  "nonce": 1,
+  "status": "confirmed",
+  "preparedAt": "2026-10-21T03:45:32.336Z",
+  "transactionHash": "0x58ad01e63631961029f4327b60cb1c1383049e15cc7628c6daf2b10ed666b916",
+  "blockNumber": "72853482"
+}

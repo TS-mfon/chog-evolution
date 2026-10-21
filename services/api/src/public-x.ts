@@ -24,6 +24,7 @@ export async function boundedSource(
     accept?: string;
     onBytes?: (bytes: number) => void;
     headers?: Record<string, string>;
+    allowXUsernameCaseRedirect?: boolean;
   } = {},
 ): Promise<Buffer> {
   if (
@@ -33,9 +34,10 @@ export async function boundedSource(
   )
     throw new ApiError("evidence_source_too_large", 422);
   let response: Response;
+  let requestedUrl = url;
   try {
-    response = await request(url, {
-      redirect: "error",
+    const init: RequestInit = {
+      redirect: options.allowXUsernameCaseRedirect ? "manual" : "error",
       credentials: "omit",
       signal: AbortSignal.timeout(10_000),
       headers: {
@@ -43,14 +45,53 @@ export async function boundedSource(
         accept: options.accept ?? "text/html,application/json;q=0.9",
         ...options.headers,
       },
-    });
-  } catch {
+    };
+    response = await request(requestedUrl, init);
+    if (
+      options.allowXUsernameCaseRedirect &&
+      [301, 302, 303, 307, 308].includes(response.status)
+    ) {
+      const location = response.headers.get("location");
+      await response.body?.cancel().catch(() => undefined);
+      let target: URL;
+      try {
+        if (!location) throw new Error();
+        target = new URL(location, requestedUrl);
+      } catch {
+        throw new ApiError("evidence_provider_redirect_rejected", 422);
+      }
+      // X canonicalizes username casing. Follow at most one case-only correction
+      // on the exact profile/post path; never follow login, other posts or hosts.
+      if (
+        requestedUrl.origin !== "https://x.com" ||
+        !/^\/[A-Za-z0-9_]{1,15}(?:\/status\/[1-9]\d{0,24})?$/.test(
+          requestedUrl.pathname,
+        ) ||
+        target.origin !== requestedUrl.origin ||
+        target.username ||
+        target.password ||
+        target.port ||
+        target.search ||
+        target.hash ||
+        requestedUrl.search ||
+        requestedUrl.hash ||
+        target.pathname.toLowerCase() !== requestedUrl.pathname.toLowerCase() ||
+        target.pathname === requestedUrl.pathname
+      )
+        throw new ApiError("evidence_provider_redirect_rejected", 422);
+      requestedUrl = target;
+      response = await request(requestedUrl, init);
+    }
+  } catch (error) {
+    // Keep rejected redirect errors distinct from transport/provider outages.
+    if (error instanceof ApiError) throw error;
     throw new ApiError("evidence_source_unavailable");
   }
   try {
     if (
       response.redirected ||
-      (response.url && new URL(response.url).href !== url.href)
+      (response.url && new URL(response.url).href !== requestedUrl.href) ||
+      [301, 302, 303, 307, 308].includes(response.status)
     )
       throw new ApiError("evidence_provider_redirect_rejected", 422);
     if (!response.ok)
@@ -299,7 +340,12 @@ export async function readPublicXProfile(
   const url = new URL(`https://x.com/${username}`);
   try {
     const profile = parseXProfile(
-      (await boundedSource(url, request)).toString("utf8"),
+      (
+        await boundedSource(url, request, MAX_PUBLIC_SOURCE_BYTES, {
+          allowXUsernameCaseRedirect: true,
+          headers: { "cache-control": "no-cache" },
+        })
+      ).toString("utf8"),
       username,
     );
     return {
@@ -438,7 +484,11 @@ export async function readPublicXPost(
     throw new ApiError("x_post_url_required", 422);
   const url = new URL(`https://x.com/${username}/status/${postId}`);
   const post = parseXPost(
-    (await boundedSource(url, request)).toString("utf8"),
+    (
+      await boundedSource(url, request, MAX_PUBLIC_SOURCE_BYTES, {
+        allowXUsernameCaseRedirect: true,
+      })
+    ).toString("utf8"),
     postId,
   );
   if (post.username.toLowerCase() !== username.toLowerCase())

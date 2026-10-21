@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { chromium } from "playwright";
 import {
@@ -34,7 +34,7 @@ const chain = defineChain({
   rpcUrls: { default: { http: ["https://testnet-rpc.monad.xyz"] } },
 });
 const key = process.env.MONAD_OWNER_PRIVATE_KEY ?? process.env.PRIVATE_KEY;
-assert.match(key ?? "", /^0x[0-9a-f]{64}$/i, "operator private key required");
+assert.ok(/^0x[0-9a-f]{64}$/i.test(key ?? ""), "operator private key required");
 const account = privateKeyToAccount(key);
 assert.equal(
   account.address.toLowerCase(),
@@ -75,6 +75,7 @@ assert.equal(
 );
 const browser = await chromium.launch({ headless: true });
 let context;
+let page;
 const observations = [];
 try {
   let storageState;
@@ -178,7 +179,7 @@ try {
   await context.addInitScript({
     content: `(() => { const listeners = {}; window.ethereum = { request: args => window.chogOperatorRequest(args), on: (event, fn) => (listeners[event] ??= []).push(fn), removeListener: (event, fn) => { listeners[event] = (listeners[event] || []).filter(item => item !== fn); } }; })();`,
   });
-  const page = await context.newPage();
+  page = await context.newPage();
   page.on("response", (response) => {
     if (response.url().startsWith(origin + "/api/"))
       observations.push({
@@ -197,9 +198,7 @@ try {
       response.status() === 200,
     { timeout: 180_000 },
   );
-  await page
-    .getByRole("button", { name: /^(Mint a Chog|Finish my mint)$/ })
-    .click({ timeout: 60_000 });
+  await page.locator(".mint-main-button").click({ timeout: 60_000 });
   const result = await (await confirm).json();
   assert.equal(result.item.nft.mode, "demo");
   assert.equal(
@@ -221,6 +220,7 @@ try {
     fullPage: true,
   });
   await context.storageState({ path: statePath });
+  await chmod(statePath, 0o600);
   await writeFile(
     resolve(directory, "mint-report.json"),
     JSON.stringify(
@@ -249,7 +249,14 @@ try {
         tokenId: journal.tokenId,
       }),
   );
+} catch (error) {
+  await page?.screenshot({ path: resolve(directory, "mint-failure.png"), fullPage: true }).catch(() => {});
+  await writeFile(resolve(directory, "mint-failure.json"), JSON.stringify({ error: error.name, observations, visibleText: await page?.locator("body").innerText().catch(() => "unavailable") }, null, 2));
+  throw new Error("Live mint acceptance failed; inspect ignored mint-failure.json", { cause: { name: error.name } });
 } finally {
-  if (context) await context.storageState({ path: statePath }).catch(() => {});
+  if (context) {
+    await context.storageState({ path: statePath }).catch(() => {});
+    await chmod(statePath, 0o600).catch(() => {});
+  }
   await browser.close();
 }

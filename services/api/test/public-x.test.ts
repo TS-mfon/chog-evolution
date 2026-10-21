@@ -344,7 +344,7 @@ test("anonymous contribution capture uses stable account identity across handle 
   );
   const request: typeof fetch = async (url, init) => {
     assert.equal(String(url), "https://x.com/chogger/status/123");
-    assert.equal(init?.redirect, "error");
+    assert.equal(init?.redirect, "manual");
     assert.equal(init?.credentials, "omit");
     assert.equal(new Headers(init?.headers).get("authorization"), null);
     return new Response(postPage());
@@ -522,6 +522,68 @@ test("bounded public reads reject redirects, HTTP failures, empty bodies and ove
     (await boundedSource(url, async () => new Response("12345"), 5)).toString(),
     "12345",
   );
+});
+
+test("public X post reads follow one username case correction and retain author identity", async () => {
+  const urls: string[] = [];
+  const result = await readPublicXPost("CHOGGER", "123", async (url, init) => {
+    urls.push(String(url));
+    assert.equal(init?.redirect, "manual");
+    assert.equal(init?.credentials, "omit");
+    if (urls.length === 1)
+      return new Response(null, {
+        status: 307,
+        headers: { location: "/chogger/status/123" },
+      });
+    return new Response(postPage());
+  });
+  assert.deepEqual(urls, [
+    "https://x.com/CHOGGER/status/123",
+    "https://x.com/chogger/status/123",
+  ]);
+  assert.equal(result.id, "123");
+  assert.equal(result.author_id, "55");
+  assert.equal(result.username, "chogger");
+});
+
+test("X case correction rejects other hosts, credentials, paths, posts, queries and redirect chains before fetching", async () => {
+  for (const location of [
+    "https://evil.invalid/chogger/status/123",
+    "https://x.com.evil.invalid/chogger/status/123",
+    "https://user@x.com/chogger/status/123",
+    "http://x.com/chogger/status/123",
+    "/login",
+    "/other/status/123",
+    "/chogger/status/124",
+    "/chogger/status/123?next=evil",
+    "/chogger/status/123#fragment",
+    "/CHOGGER/status/123",
+    "https://x.com:444/chogger/status/123",
+  ]) {
+    let calls = 0;
+    await assert.rejects(
+      readPublicXPost("CHOGGER", "123", async () => {
+        calls++;
+        return new Response(null, { status: 307, headers: { location } });
+      }),
+      code("evidence_provider_redirect_rejected"),
+    );
+    assert.equal(calls, 1, location);
+  }
+  let calls = 0;
+  await assert.rejects(
+    readPublicXPost("CHOGGER", "123", async () => {
+      calls++;
+      return new Response(null, {
+        status: 307,
+        headers: {
+          location: calls === 1 ? "/chogger/status/123" : "/CHOGGER/status/123",
+        },
+      });
+    }),
+    code("evidence_provider_redirect_rejected"),
+  );
+  assert.equal(calls, 2);
 });
 
 const makeImage = (
