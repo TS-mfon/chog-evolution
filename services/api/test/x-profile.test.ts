@@ -105,7 +105,7 @@ test("profile lookup defaults to public pages even when a legacy API key exists"
   const calls: string[] = [];
   const profile = await lookupXProfile("ChogNFT", async (url, init) => {
     calls.push(String(url));
-    assert.equal(init?.redirect, "error");
+    assert.equal(init?.redirect, "manual");
     assert.equal(init?.credentials, "omit");
     assert.equal(new Headers(init?.headers).get("authorization"), null);
     assert.equal(new Headers(init?.headers).get("cookie"), null);

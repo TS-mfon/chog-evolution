@@ -8,28 +8,28 @@ This is a traceability ledger for `build-plan.md` (all duplicated PRD/specificat
 
 This table supersedes implementation gaps in the historical ledger below. Exact measured checks and live references are maintained in [mvp-release.md](mvp-release.md). A locally implemented item is not automatically a live-provider acceptance pass.
 
-| ID      | Requirement / source                                   | Implementation / verification                                         | Current status                               |
-| ------- | ------------------------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------- |
-| MVP-001 | Common runtime errors, limits, IDs and shared quotas   | Runtime/adapter tests; Mongo quota case                               | Passed local integration                     |
-| MVP-002 | Anonymous public X identity and posts                  | Public hydration/identity tests; live controlled account required     | Implemented; live pending                    |
-| MVP-003 | Attached image capture without vision inference        | Bound media, decoded file limits, GridFS/checkpoint tests             | Implemented; local recovery proved           |
-| MVP-004 | Durable preview generations and numbered attempts      | Lease, source, consumption CAS and retry tests                        | Passed local integration                     |
-| MVP-005 | 75 XP once/wallet/UTC finalization day plus cooldown   | Concurrent transaction and midnight-boundary tests                    | Implemented; local contention proved         |
-| MVP-006 | Mint/X-link once-only and 25 mainnet/day preserved     | Scope regression cases                                                | Passed local integration                     |
-| MVP-007 | Earned optional equipment, no auto-equip               | Owner/version/idempotency checks and browser mutations                | Implemented; real API browser passed         |
-| MVP-008 | Source-event artwork and exact history                 | GridFS recovery, stale version CAS, before/after UI                   | Implemented; real API browser passed         |
-| MVP-009 | Original metadata plus companion distinction           | Safe retrieval, explicit refresh state, view-only calls               | Live collection/owner/tokenURI read verified |
-| MVP-010 | Seven main routes and locked design                    | Production route build, fixture desktop/mobile screenshots            | Passed final fixture and real API browser    |
-| MVP-011 | All-collection persistent acceptance                   | Isolated owner-marked replica set, transaction monitoring             | Passed: 27 cases / 33 collections            |
-| MVP-012 | Actual API browser journey and refresh                 | Signed wallet, source, finality, one reward, three art versions       | Passed with controlled external providers    |
-| MVP-013 | Explicit repeatable migrations/readiness               | Schema-3 marker, interrupted backfill and retry tests                 | Passed local integration                     |
-| MVP-014 | Bounded operational metrics and pagination             | Runtime metrics, shared quota and cursor tests                        | Passed local integration                     |
-| MVP-015 | Supplied reference provenance pinned                   | Five SHA-256 matches at approved repository revision                  | Verified locally                             |
-| MVP-016 | Preserve Git history, push and deploy existing project | Normal commit/push, CI gates, alias smoke                             | Pending                                      |
-| MVP-017 | Live wallet-to-artwork acceptance                      | Real transaction, GenLayer final decision, ledger/artifact references | Pending                                      |
-| MVP-018 | Controlled X bio/post and media live check             | User-provided account and real anonymous retrieval                    | Pending                                      |
-| MVP-019 | Demo metadata URI owner configuration                  | Read-only default command and transaction journal                     | Pending                                      |
-| MVP-020 | Truthful release record and deferred scope             | Current release ledger; no substituted fixture proof                  | Passed: 27 cases / 33 collections            |
+| ID      | Requirement / source                                   | Implementation / verification                                              | Current status                               |
+| ------- | ------------------------------------------------------ | -------------------------------------------------------------------------- | -------------------------------------------- |
+| MVP-001 | Common runtime errors, limits, IDs and shared quotas   | Runtime/adapter tests; Mongo quota case                                    | Passed local integration                     |
+| MVP-002 | Anonymous public X identity and posts                  | Public hydration tests; real bio proof and permanent wallet binding        | Passed live binding and source retrieval     |
+| MVP-003 | Attached image capture without vision inference        | Bound media, decoded file limits, GridFS/checkpoint tests                  | Implemented; local recovery proved           |
+| MVP-004 | Durable preview generations and numbered attempts      | Lease, source, consumption CAS and retry tests                             | Passed local integration                     |
+| MVP-005 | 75 XP once/wallet/UTC finalization day plus cooldown   | Concurrent transaction and midnight-boundary tests                         | Implemented; local contention proved         |
+| MVP-006 | Mint/X-link once-only and 25 mainnet/day preserved     | Scope regression cases                                                     | Passed local integration                     |
+| MVP-007 | Earned optional equipment, no auto-equip               | Owner/version/idempotency checks and browser mutations                     | Implemented; real API browser passed         |
+| MVP-008 | Source-event artwork and exact history                 | GridFS recovery, stale version CAS, before/after UI                        | Implemented; real API browser passed         |
+| MVP-009 | Original metadata plus companion distinction           | Safe retrieval, explicit refresh state, view-only calls                    | Live collection/owner/tokenURI read verified |
+| MVP-010 | Seven main routes and locked design                    | Production route build, fixture desktop/mobile screenshots                 | Passed final fixture and real API browser    |
+| MVP-011 | All-collection persistent acceptance                   | Isolated owner-marked replica set, transaction monitoring                  | Passed: 27 cases / 33 collections            |
+| MVP-012 | Actual API browser journey and refresh                 | Signed wallet, source, finality, one reward, three art versions            | Passed with controlled external providers    |
+| MVP-013 | Explicit repeatable migrations/readiness               | Schema-3 marker, interrupted backfill and retry tests                      | Passed local integration                     |
+| MVP-014 | Bounded operational metrics and pagination             | Runtime metrics, shared quota and cursor tests                             | Passed local integration                     |
+| MVP-015 | Supplied reference provenance pinned                   | Five SHA-256 matches at approved repository revision                       | Verified locally                             |
+| MVP-016 | Preserve Git history, push and deploy existing project | Normal commit/push, CI gates, alias smoke                                  | See current release record                   |
+| MVP-017 | Live wallet-to-artwork acceptance                      | Mint tx, finalized accepted decision, one 50 XP entry, public PNG readback | Passed live                                  |
+| MVP-018 | Controlled X bio/post and media live check             | User-provided account and real anonymous retrieval                         | See current release record                   |
+| MVP-019 | Demo metadata URI owner configuration                  | Read-only default command and transaction journal                          | See current release record                   |
+| MVP-020 | Truthful release record and deferred scope             | Current release ledger; no substituted fixture proof                       | Passed: 27 cases / 33 collections            |
 
 ## Historical requirement ledger — 2026-10-18
 

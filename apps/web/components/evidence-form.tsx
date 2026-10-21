@@ -512,7 +512,7 @@ export function EvidenceForm({ quest }: { quest?: Quest }) {
                   : `Preview expires ${timeLabel(preview.expiresAt)}.`}
             </span>
           </div>
-          {(preview.source || preview.media?.length) && (
+          {(preview.source || (preview.media?.length ?? 0) > 0) && (
             <SourceEvidence
               source={preview.source}
               media={preview.media}

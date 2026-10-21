@@ -250,9 +250,31 @@ try {
       }),
   );
 } catch (error) {
-  await page?.screenshot({ path: resolve(directory, "mint-failure.png"), fullPage: true }).catch(() => {});
-  await writeFile(resolve(directory, "mint-failure.json"), JSON.stringify({ error: error.name, observations, visibleText: await page?.locator("body").innerText().catch(() => "unavailable") }, null, 2));
-  throw new Error("Live mint acceptance failed; inspect ignored mint-failure.json", { cause: { name: error.name } });
+  await page
+    ?.screenshot({
+      path: resolve(directory, "mint-failure.png"),
+      fullPage: true,
+    })
+    .catch(() => {});
+  await writeFile(
+    resolve(directory, "mint-failure.json"),
+    JSON.stringify(
+      {
+        error: error.name,
+        observations,
+        visibleText: await page
+          ?.locator("body")
+          .innerText()
+          .catch(() => "unavailable"),
+      },
+      null,
+      2,
+    ),
+  );
+  throw new Error(
+    "Live mint acceptance failed; inspect ignored mint-failure.json",
+    { cause: { name: error.name } },
+  );
 } finally {
   if (context) {
     await context.storageState({ path: statePath }).catch(() => {});

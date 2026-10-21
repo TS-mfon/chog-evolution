@@ -125,6 +125,36 @@ export type ArtworkOptions = {
   }) => Promise<Buffer>;
 };
 
+export async function generateGeminiArtwork(
+  input: Parameters<NonNullable<ArtworkOptions["generateImage"]>>[0],
+) {
+  const ai = new GoogleGenAI({
+    apiKey: process.env.GEMINI_API_KEY!,
+    httpOptions: { timeout: 120000 },
+  });
+  const result = await ai.interactions.create({
+    model: process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image",
+    input: [
+      { type: "text", text: input.prompt },
+      {
+        type: "image",
+        mime_type: "image/png",
+        data: input.continuity.toString("base64"),
+      },
+      ...input.references.map((ref) => ({
+        type: "image" as const,
+        mime_type: "image/png" as const,
+        data: ref.buffer.toString("base64"),
+      })),
+    ],
+    response_modalities: ["image"],
+    response_format: { type: "image", aspect_ratio: "1:1", image_size: "1K" },
+  });
+  const output = result.output_image;
+  if (!output?.data) throw new Error("gemini_image_output_missing");
+  return Buffer.from(output.data, "base64");
+}
+
 /** Render from an immutable source event, then publish only to that profile version. */
 export async function processOneArtwork(
   db: Db,
@@ -158,16 +188,14 @@ export async function processOneArtwork(
   try {
     const [profile, history] = await Promise.all([
       db.collection<any>("nft_profiles").findOne({ _id: job.profile_id }),
-      db
-        .collection<any>("evolution_history")
-        .findOne({
-          ...(job.source_event_id
-            ? { source_event_id: job.source_event_id }
-            : { claim_id: job.claim_id }),
-          profile_id: job.profile_id,
-          finalized: true,
-          outcome: "accepted",
-        }),
+      db.collection<any>("evolution_history").findOne({
+        ...(job.source_event_id
+          ? { source_event_id: job.source_event_id }
+          : { claim_id: job.claim_id }),
+        profile_id: job.profile_id,
+        finalized: true,
+        outcome: "accepted",
+      }),
     ]);
     if (!profile || !history)
       throw new Error("trusted_evolution_event_required");
@@ -204,13 +232,11 @@ export async function processOneArtwork(
       const claim = await db
         .collection<any>("claims")
         .findOne({ _id: job.claim_id, status: "accepted" });
-      decision = await db
-        .collection<any>("decisions")
-        .findOne({
-          claim_id: job.claim_id,
-          finalized: true,
-          outcome: "accepted",
-        });
+      decision = await db.collection<any>("decisions").findOne({
+        claim_id: job.claim_id,
+        finalized: true,
+        outcome: "accepted",
+      });
       const ledger = await db
         .collection<any>("xp_ledger")
         .findOne({ claim_id: job.claim_id, amount: { $gt: 0 } });
@@ -292,35 +318,11 @@ export async function processOneArtwork(
                   continuity,
                   references: refs,
                 });
-              const ai = new GoogleGenAI({
-                apiKey: process.env.GEMINI_API_KEY!,
-                httpOptions: { timeout: 120000 },
+              return generateGeminiArtwork({
+                prompt,
+                continuity,
+                references: refs,
               });
-              const result = await ai.interactions.create({
-                model,
-                input: [
-                  { type: "text", text: prompt },
-                  {
-                    type: "image",
-                    mime_type: "image/png",
-                    data: continuity.toString("base64"),
-                  },
-                  ...refs.map((ref) => ({
-                    type: "image" as const,
-                    mime_type: "image/png" as const,
-                    data: ref.buffer.toString("base64"),
-                  })),
-                ],
-                response_format: {
-                  type: "image",
-                  mime_type: "image/png",
-                  aspect_ratio: "1:1",
-                  image_size: "1K",
-                },
-              });
-              if (!result.output_image?.data)
-                throw new Error("gemini_image_output_missing");
-              return Buffer.from(result.output_image.data, "base64");
             },
           );
         } else
@@ -453,20 +455,18 @@ export async function processOneArtwork(
             await db
               .collection<any>("artifacts")
               .insertOne(artifact, { session });
-          await db
-            .collection<any>("nft_profiles")
-            .updateOne(
-              artworkVersionFilter(profile._id, version),
-              {
-                $set: {
-                  artwork_artifact_id: artifact._id,
-                  artwork_url: artifact.public_url,
-                  artwork_version: version,
-                  updated_at: new Date(),
-                },
+          await db.collection<any>("nft_profiles").updateOne(
+            artworkVersionFilter(profile._id, version),
+            {
+              $set: {
+                artwork_artifact_id: artifact._id,
+                artwork_url: artifact.public_url,
+                artwork_version: version,
+                updated_at: new Date(),
               },
-              { session },
-            );
+            },
+            { session },
+          );
           // Only publication fields are filled after the immutable event snapshot is saved.
           await db
             .collection<any>("evolution_history")
@@ -475,17 +475,15 @@ export async function processOneArtwork(
               { $set: { "after.artworkUrl": artifact.public_url } },
               { session },
             );
-          await db
-            .collection<any>("evolution_history")
-            .updateOne(
-              {
-                profile_id: profile._id,
-                previous_version: version,
-                "before.artworkUrl": null,
-              },
-              { $set: { "before.artworkUrl": artifact.public_url } },
-              { session },
-            );
+          await db.collection<any>("evolution_history").updateOne(
+            {
+              profile_id: profile._id,
+              previous_version: version,
+              "before.artworkUrl": null,
+            },
+            { $set: { "before.artworkUrl": artifact.public_url } },
+            { session },
+          );
           await jobs.updateOne(
             { _id: job._id, lease_token: workerToken },
             {
@@ -500,23 +498,21 @@ export async function processOneArtwork(
             },
             { session },
           );
-          await db
-            .collection<any>("audit_events")
-            .insertOne(
-              {
-                _id: randomUUID(),
-                entity_type: "evolution",
-                entity_id: sourceEventId,
-                action: "artwork_published",
-                details: {
-                  artifact_id: artifact._id,
-                  image_hash: artifact.image_hash,
-                  version,
-                },
-                created_at: new Date(),
+          await db.collection<any>("audit_events").insertOne(
+            {
+              _id: randomUUID(),
+              entity_type: "evolution",
+              entity_id: sourceEventId,
+              action: "artwork_published",
+              details: {
+                artifact_id: artifact._id,
+                image_hash: artifact.image_hash,
+                version,
               },
-              { session },
-            );
+              created_at: new Date(),
+            },
+            { session },
+          );
         },
         { writeConcern: { w: "majority" } },
       );
