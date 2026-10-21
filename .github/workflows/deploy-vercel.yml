@@ -30,7 +30,7 @@ jobs:
         run: |
           forge build --root contracts
           python3 -m venv /tmp/chog-genvm-tools
-          /tmp/chog-genvm-tools/bin/pip install genvm-lint==0.11.0
+          /tmp/chog-genvm-tools/bin/pip install genvm-linter==0.11.0
           echo "/tmp/chog-genvm-tools/bin" >> "$GITHUB_PATH"
       - name: Test and build application
         run: |

@@ -19,7 +19,7 @@ This table supersedes implementation gaps in the historical ledger below. Exact 
 | MVP-007 | Earned optional equipment, no auto-equip               | Owner/version/idempotency checks and browser mutations                | Implemented; real API browser passed         |
 | MVP-008 | Source-event artwork and exact history                 | GridFS recovery, stale version CAS, before/after UI                   | Implemented; real API browser passed         |
 | MVP-009 | Original metadata plus companion distinction           | Safe retrieval, explicit refresh state, view-only calls               | Live collection/owner/tokenURI read verified |
-| MVP-010 | Seven main routes and locked design                    | Production route build, fixture desktop/mobile screenshots            | Implemented; final browser rerun pending     |
+| MVP-010 | Seven main routes and locked design                    | Production route build, fixture desktop/mobile screenshots            | Passed final fixture and real API browser    |
 | MVP-011 | All-collection persistent acceptance                   | Isolated owner-marked replica set, transaction monitoring             | Passed: 27 cases / 33 collections            |
 | MVP-012 | Actual API browser journey and refresh                 | Signed wallet, source, finality, one reward, three art versions       | Passed with controlled external providers    |
 | MVP-013 | Explicit repeatable migrations/readiness               | Schema-3 marker, interrupted backfill and retry tests                 | Passed local integration                     |
