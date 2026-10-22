@@ -1,46 +1,69 @@
 # Provider integrations
 
-Local behavior tests use explicit test doubles. They do not establish that a provider, database, wallet or deployed contract is reachable. Actual Mongo/API acceptance uses isolated storage with controlled external providers. Current evidence is in [mvp-release.md](mvp-release.md).
+Provider adapters supply bounded facts and external execution. They do not replace the [protocol's](protocol.md) identity, finality or transactional reward checks. Current dated observations are recorded in [mvp-release.md](mvp-release.md).
 
-| Provider       | Implemented behavior                                                                                  | Configuration and limits                                                                                                             |
-| -------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| EVM wallet     | EIP-6963/EIP-1193 discovery, nonce sign-in, network switching, real mint request and refresh recovery | Browser wallet and testnet MON for network fees; receipts and NFT IDs are handled automatically                                      |
-| Monad Testnet  | Collection/supply checks, receipt finality, mint event and current-owner verification                 | `MONAD_TESTNET_RPC_URL`, `DEMO_COLLECTION_ADDRESS`, `MONAD_FINALITY_BLOCKS`                                                          |
-| Monad mainnet  | Original Chog discovery/ownership and recent successful outbound contract-call evidence               | `MONAD_MAINNET_RPC_URL`, `ORIGINAL_CHOG_COLLECTION_ADDRESS`; generic scans cover a bounded recent window                             |
-| X              | Bio-code account verification and public post lookup; author must match verified X identity           | Anonymous `X_SOURCE_MODE=public_page` by default, no OAuth/key; optional explicit `api` mode or unavailable-source `disabled` state  |
-| GitHub         | Public repository metadata, pinned commit and README with wallet attribution                          | Optional `GITHUB_PUBLIC_READ_TOKEN`; fixed API host, no redirects, bounded responses; forks/spam/nonrelevant work fail policy review |
-| GenLayer       | Owner-signed adjudication, stored submission reference, finality polling and decision validation      | Stable StudioNet alias; `GENLAYER_NETWORK`, `GENLAYER_RPC_URL`, `GENLAYER_CONTRACT_ADDRESS`, `GENLAYER_PRIVATE_KEY`                  |
-| Artwork        | Versioned trait-based PNG/JSON publication; optional Gemini generation                                | Built-in renderer without `GEMINI_API_KEY`; configured Gemini uses `GEMINI_IMAGE_MODEL` and retries failures                         |
-| MongoDB/GridFS | Sessions, claims, evidence, decisions, XP, checkpoints, history and persistent artifacts              | `MONGODB_URI`, `MONGODB_DATABASE`; Atlas or replica set for transactions                                                             |
+## Integration matrix
 
-Public evidence URLs serve the exact content-hashed snapshot submitted to GenLayer; authentication messages and signatures stay private. `APP_ORIGIN` plus `PUBLIC_API_PATH=/api`, or an explicit `PUBLIC_API_URL`, must resolve to a publicly reachable HTTPS API for validators. User-written context is untrusted.
+| Integration            | Implemented behavior                                                                        | Configuration                                                          |
+| ---------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| EVM wallet             | EIP-6963/EIP-1193 discovery, signed session, network switch, real mint and receipt recovery | Browser wallet and testnet MON                                         |
+| Monad Testnet          | Collection/supply checks, successful mint, canonical receipt and owner verification         | `MONAD_TESTNET_RPC_URL`, `DEMO_COLLECTION_ADDRESS`, confirmation depth |
+| Monad mainnet          | Original ownership/metadata and bounded outbound contract-call scan                         | Mainnet RPC, original collection and scan bounds                       |
+| X                      | Bio code/stable identity and exact submitted public posts/photos                            | `X_SOURCE_MODE=public_page` by default; optional explicit API mode     |
+| GitHub                 | Public repo metadata, pinned commit/README and wallet attribution                           | Optional `GITHUB_PUBLIC_READ_TOKEN`                                    |
+| GenLayer               | Owner-signed submission, saved reference, `FINALIZED` polling and `LATEST_FINAL` read       | Network/RPC/contract and worker private key                            |
+| Deterministic renderer | Trait/equipment-based PNG/JSON and preserved identity                                       | Checked-in composition/reference assets                                |
+| Gemini                 | Optional rewarded-claim image generation                                                    | Worker `GEMINI_API_KEY`, `GEMINI_IMAGE_MODEL`                          |
+| MongoDB/GridFS         | Durable auth/proof, claims, rewards, leases, history and source/artwork assets              | Private URI, database and replica-set support                          |
 
-## Monad scans
+## Wallet and RPC
 
-The default scanner reads up to `SCAN_WALLET_BLOCKS_PER_REQUEST=32` finalized mainnet blocks per request, starting within `SCAN_WALLET_LOOKBACK_BLOCKS=256` blocks on its first run. Later requests continue from checkpoints. The response and UI report coverage and whether more remains. Transaction success, sender, destination code and finality are verified before review. The maintained general participation policy caps rewards at 25 XP once per wallet per UTC day, across all owned Chogs.
+Runtime `/v1/config` separates browser-safe public endpoints from server RPC credentials. The API validates chain ID before using ownership/receipt facts. The wallet confirms minting on Monad Testnet; it does not receive the worker or contract-owner key.
 
-`MONAD_SCAN_TARGETS` optionally configures reviewed protocol event targets with contract, topic, indexed wallet position, start block and quest slug. Configured targets select event scanning instead of generic recent-transaction scanning. Matches follow the same GenLayer path; clicking rescan never awards XP. A standard RPC is not an indexed lifetime account history. See [quest-registry.md](quest-registry.md) for policy maintenance.
+Mint recovery retains the transaction hash. Mainnet scans require successful canonical contract interactions; a generic call does not prove attendance, social engagement or a named third-party mission. Original token metadata stays read-only.
 
-## Scheduled worker
+## X public capture
 
-`.github/workflows/evolution-worker.yml` runs every five minutes and supports `workflow_dispatch`. Workflow concurrency plus database leases coordinate work. Each bounded `--once` invocation processes the configured claim batch plus capture and artwork work. Pending consensus does not consume failure retries. Ambiguous submissions are held for explicit finalized-state reconciliation and are never blindly resent. Source-unavailable claims may recapture the same logical source into an immutable numbered attempt. Local `npm run dev` keeps the worker running continuously.
+`X_SOURCE_MODE=public_page` uses anonymous pages without OAuth/API credentials. `api` requires `X_API_BEARER_TOKEN`; `disabled` explicitly marks source unavailability. Invalid mode values fail configuration rather than enabling simulation.
 
-Configure GitHub Actions secrets:
+Bio verification binds stable numeric provider identity to the wallet, surviving username changes. Unlinking does not release identity for another wallet. The post parser checks exact post ID and stable author; timeline ingestion, likes/reposts and private activity are outside this MVP.
 
-- `MONGODB_URI`: the transaction-capable database.
-- `GENLAYER_PRIVATE_KEY`: a funded signer matching the adjudicator owner.
-- `GEMINI_API_KEY`: optional, enables the external artwork provider.
+One same-host HTTPS redirect is permitted only for exact username-case correction on the same profile/post path. Other hosts, post IDs, login routes, query changes and redirect chains remain rejected. See [public-x.ts](../services/api/src/public-x.ts).
 
-The workflow pins the existing StudioNet RPC/network/contract and public artifact path. Migrations run separately during deployment, never on every worker tick.
+Source text persists before media. Only exact parsed attachments are captured under image type/byte/pixel bounds. Images are preserved as source attachments without semantic analysis. Page-format changes and rate limits can make capture unavailable; do not replace failures with invented sources.
 
-Finalized decisions must match claim ID, quest, policy version, wallet, NFT identity and evidence hash and stay within the XP cap. One MongoDB transaction adds XP to the latest persisted profile and records history and an immutable artwork snapshot. Each positive claim creates at most one XP entry and one artwork job. Accepted zero-XP claims create neither. Optional equipment changes use independent source events and deterministic jobs without any XP. Earned optional traits do not automatically equip. A late render cannot overwrite a later evolution.
+## GitHub capture
 
-## Historical evidence
+Only supported public repository URLs are identifiers. Requests use the fixed GitHub API host, bounded bodies and no redirects. Capture pins the commit/README and checks claimant wallet attribution in that README. The source key consumes the repository globally rather than treating every commit as a new reward source.
 
-Manifests record Monad and GenLayer contract verification on 2026-10-18. That session also recorded production Mongo migrations/readiness, the Vercel alias, and successful scheduled worker run `39138193699`. Those observations do not verify this rebuild. A current real mint-to-finalized-decision-to-artwork journey, X lookup and Gemini generation remain unverified.
+A token increases public API limits; it does not authorize private repository evidence or make forks/copied work eligible. Substance/originality remain governed by the pinned policy. See [evidence-source.ts](../services/api/src/evidence-source.ts).
 
-## Sources, progression and operations
+## Mainnet scanning
 
-X account binding uses the stable numeric provider ID and survives username changes. Unlinking does not free that ID for another wallet. Only submitted public posts are read; timeline ingestion is outside this MVP. Exact source text is frozen before media uploads; image checkpoints survive interruptions. Captured JPEG/PNG/WebP files are bounded and decoded for file integrity without semantic/vision analysis. Original NFT token metadata uses bounded public URL retrieval with private-network defenses and remains separate from companion modifications.
+Default recent scans inspect at most `SCAN_WALLET_BLOCKS_PER_REQUEST=32` finalized blocks per request, beginning within an initial `SCAN_WALLET_LOOKBACK_BLOCKS=256` window. Later requests resume checkpoints. Coverage and `hasMore`/partial state are reported.
 
-Contributions grant 75 XP once per wallet per UTC finalization day, with a one-hour cooldown across midnight. Additional accepted contributions grant zero. Maintained mainnet participation remains 25 XP per UTC block date; mint and bio rewards remain once-only. Hourly bounded provider/job metrics exclude raw secrets and labels. Explicit schema-3 migration and `/ready` prevent serving an unmigrated database.
+Configured `MONAD_SCAN_TARGETS` selects reviewed event scanning rather than generic transaction scanning. The target fields are `chainId,address,topic0,walletTopicIndex,startBlock,questSlug`; rules must correspond to a genuine completion signal. Matches follow the same immutable claim/GenLayer path.
+
+RPC is not a lifetime address index. Increasing scan settings does not prove complete account history. Mainnet rewards are once per wallet per UTC block date, and scanning itself awards nothing. See [quest-registry.md](quest-registry.md).
+
+## GenLayer
+
+The pinned stable adapter preserves StudioNet-specific chain fields. Submission is owner-signed; the contract's owner cannot be replaced by an arbitrary worker key. The adapter records the actual transaction hash, polls finality and reads finalized stored decisions before strict binding.
+
+Validators fetch the API's exact HTTPS snapshot and compare its digest. Original source capture remains a backend trust boundary. Missing/changed snapshots produce no positive reward. Unknown-reference recovery reads finalized state rather than rebroadcasting.
+
+Supported SDK network names and key/configuration constraints are in [configuration.md](configuration.md). Changing a deployment with pending claims requires explicit compatibility planning.
+
+## Artwork and storage
+
+Reward artwork uses deterministic composition without a Gemini key. Configured Gemini consumes authoritative stage/equipment and continuity/reference images; it never chooses XP or traits. Equipment jobs always use deterministic rendering.
+
+Generation failure preserves already committed reward/prior image and retries the existing job. Published provenance identifies the actual model, prompt version, reference revision/hashes and output hash. In the dated release record, successful published artwork used `chog-trait-renderer-v2`; Gemini generation remained quota-blocked. No later Gemini success is implied here.
+
+Publication currently uses GridFS. `ASSET_STORAGE_*` entries are reserved, not an implemented object-storage integration. Original metadata fetch failures retain the last valid cached content with explicit status. [Architecture](architecture.md).
+
+## Scheduled worker configuration
+
+The [worker workflow](../.github/workflows/evolution-worker.yml) uses a five-minute schedule and `workflow_dispatch`, with `cancel-in-progress: false` and database leases. A tick performs bounded capture/claim batches plus one artwork job. Pending consensus does not consume provider-failure retries.
+
+Required repository secrets: `MONGODB_URI`, `GENLAYER_PRIVATE_KEY`. Optional secrets: Gemini and public-provider tokens. Network/contract/origins are pinned in YAML; migration runs separately during deployment. Provider availability must be observed live, independently from fixture or isolated Mongo acceptance.

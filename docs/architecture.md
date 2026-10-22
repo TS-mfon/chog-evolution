@@ -1,67 +1,163 @@
 # Architecture
 
-CHOG Evolution is a TypeScript monorepo with Next.js, Fastify, MongoDB and a separate GenLayer/artwork worker. MongoDB replaced the original PostgreSQL plan at the user's direction; transactions require Atlas or a replica set.
+CHOG Evolution is a TypeScript monorepo with a Next.js client, Fastify API, MongoDB/GridFS and a separate GenLayer/artwork worker. Monad supplies NFT ownership and transaction facts; GenLayer supplies finalized adjudication. Progression is persisted offchain.
 
-## Responsibilities
+[Protocol specification](protocol.md) · [Trust model](security.md) · [Operator runbook](operations.md)
 
-| System                  | Authority                                                                  |
-| ----------------------- | -------------------------------------------------------------------------- |
-| Monad                   | NFT ownership, demo mint state, transactions and logs                      |
-| GenLayer                | Finalized evidence-review outcome and permitted XP                         |
-| API                     | Wallet auth, current ownership, policies, source capture and deduplication |
-| MongoDB                 | Claims, decisions, XP ledger, profiles, checkpoints, leases and history    |
-| Worker                  | Submission/reconciliation, finalization and artwork jobs                   |
-| Trait renderer / Gemini | Images only; no authority over ownership, traits or XP                     |
-| GridFS                  | Published image and JSON assets                                            |
-| Web                     | Story, mint, quests, evolution, activity, profile and upgrade interactions |
+## System topology
 
-Vercel mounts Fastify lazily behind `/api`; standalone deployment is also supported. Runtime `/v1/config` supplies public chain settings without exposing private RPC credentials.
-
-## Data flow
-
-1. A wallet signs an expiring single-use nonce. The API creates an HttpOnly session and stores authentication proof privately.
-2. Mint preparation verifies collection and supply. After wallet confirmation, the client remembers the transaction per wallet, waits for its receipt and asks the API to verify finality, mint event and ownership. Registration and its first quest are automatic. Refresh resumes confirmation without a second mint.
-3. NFT discovery uses ERC-721 enumeration when available, otherwise bounded token-ID ownership reads. Original Chogs use companion profiles; their collection metadata is not changed.
-4. Claims reference immutable policy versions and source snapshots. Mint proof comes from the receipt. X posts bind to verified X identity. GitHub evidence pins a commit and README containing wallet attribution. Recent mainnet scans capture successful contract calls or configured events and resume from checkpoints.
-5. Wallet/request-intent idempotency, source identity and reward-scope indexes prevent duplicate claims and repeated rewards across profiles. Evidence is served at a content-hashed HTTPS URL for validators.
-6. The worker stores one GenLayer transaction reference, polls for Finalized consensus, then reads finalized contract state. Pending, rejected, unavailable, malformed and mismatched decisions cannot add XP.
-7. An accepted decision commits the ledger, latest profile, history and immutable artwork snapshot in a MongoDB transaction. Artwork jobs validate and store PNG/JSON assets. Publication checks the evolution version so older jobs cannot replace newer art.
-
-## Repository
-
-```text
-apps/web/                   Next routes, shared shell and wallet/data state
-services/api/               Fastify routes, repositories, evidence and scans
-services/evolution-worker/   Stable StudioNet adapter, finalization and artwork
-packages/evolution-rules/    Progression thresholds and constraints
-packages/art-composition/    Deterministic Chog art and trait catalogue
-packages/shared-types/      Shared domain types
-packages/validation/        Shared validators
-contracts/                  Demo ERC-721 and Foundry tests
-genlayer/                   Deployed Intelligent Contract source
-assets/chog-references/     Supplied brand illustrations and hashes
-.ulpi/design/               Locked purple/black design and flow spec
-scripts/                    Build, browser, docs and contract checks
+```mermaid
+flowchart TB
+    subgraph Client[User browser]
+        UI[Next.js application]
+        Wallet[EIP-6963 / EIP-1193 wallet]
+        UI <--> Wallet
+    end
+    subgraph App[Application operator]
+        Adapter[Next /api adapter]
+        API[Fastify API]
+        Worker[Claim and artwork worker]
+        DB[(MongoDB replica set)]
+        Assets[(GridFS)]
+        Adapter --> API
+        API <--> DB
+        API <--> Assets
+        Worker <--> DB
+        Worker <--> Assets
+    end
+    UI --> Adapter
+    Wallet --> Monad[Monad RPC and ERC-721]
+    API --> Monad
+    API --> Sources[Public X / GitHub / metadata sources]
+    Worker --> GenLayer[GenLayer ClaimAdjudicator]
+    Worker --> Gemini[Optional Gemini]
+    GenLayer -->|HTTPS snapshot fetch| API
 ```
 
-## Invariants and recovery
+The diagram describes communication, not a common trust domain: the browser, original providers, RPC, consensus network and operator-controlled storage each have different authority.
 
-- Privileged calls verify the session and current onchain ownership. Client-supplied XP, decisions and ownership are never authoritative.
-- Each positive claim creates at most one XP entry and one evolution job; zero-XP acceptance creates neither. Equipment changes use independent source events and do not award XP. XP uses the profile read inside the transaction, not a stale worker snapshot.
-- Receipt recovery and claim idempotency survive refresh/retry. Account changes clear private client state.
-- Workers use expiring leases. Pending consensus is not a failed attempt; unknown submission references are held for review instead of rebroadcast.
-- Evidence and evolution history are immutable. Public proof contains verified facts, not signatures or session secrets.
-- Provider requests use fixed hosts, size limits and no redirects. User context is untrusted evidence.
-- The prior valid image remains available on failure. A missing Gemini key selects the built-in trait renderer; configured provider failures retry.
+## Deployable processes
 
-The RPC scanner reports a bounded recent window, not lifetime indexed history. Browser tests use separate acceptance fixtures, never a public simulation mode. Provider and visual verification limits are in [testing.md](testing.md).
+| Process  | Runtime                                       | Responsibility                                                                                            |
+| -------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Web      | Next.js App Router, Node 24 for server routes | Product routes, wallet discovery, client state and same-origin API transport                              |
+| API      | Fastify 5 on Node 24                          | Authentication, ownership, policies, source capture, preview/claim persistence, public proof and metadata |
+| Worker   | Node 24, stable GenLayer SDK                  | Durable capture work, claim submission/finality/reconciliation and artwork publication                    |
+| Database | MongoDB replica set / Atlas                   | Transactions, indexes, leases, replay protection and durable domain state                                 |
 
-## Durable MVP boundaries
+`npm run dev` launches web, standalone API and continuous worker with root `.env`. In Vercel, the API is mounted inside the Next server route using `app.inject`; the standalone listener is a separate deployment option. API instances do not run background adjudication loops. GitHub Actions invokes a bounded worker tick every five minutes.
 
-Previews persist source text before resumable image capture. `evidence_previews`, `source_capture_jobs`, `source_media_jobs`, `source_media` and source GridFS files retain exact capture generations. A preview-to-claim transaction checks the observed generation and hash before consumption. `claim_attempts` preserves prior evidence while retrying only unavailable sources; ambiguous submissions reconcile finalized GenLayer state without rebroadcast. `claim_events` exposes a sanitized public timeline.
+## Responsibility boundaries
 
-Reward policy version 3 serializes positive contribution rewards at wallet scope: 75 XP once per UTC finalization day and a one-hour cooldown across midnight. The transaction re-reads current profile/version and commits ledger, earned-trait provenance, source event, history and job together. Optional equipment is owner-controlled and does not change automatically on unlock. Its own history/jobs use source-event uniqueness, and publication checks the target version. History can resolve the previous image across pagination boundaries.
+| Subsystem           | Owns                                                                                     | Implementation                                                                                                                 |
+| ------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Wallet auth         | Nonces, signature verification, session token digests and private proofs                 | [auth-repository.ts](../services/api/src/auth-repository.ts)                                                                   |
+| Chain configuration | Allowed collections/chains, public-safe RPC config and ownership reads                   | [config.ts](../services/api/src/config.ts)                                                                                     |
+| Mint                | Preparation, supply checks, receipt and mint event validation                            | [mint-service.ts](../services/api/src/mint-service.ts)                                                                         |
+| Profiles            | NFT identity, owner association, equipment, passports and original metadata caching      | [profile-repository.ts](../services/api/src/profile-repository.ts)                                                             |
+| Capture             | Canonical source URLs, stable attribution, pinned source revisions and media checkpoints | [evidence-source.ts](../services/api/src/evidence-source.ts), [media-capture.ts](../services/api/src/media-capture.ts)         |
+| Preview / claim     | Saved capture generations, idempotent consumption, attempt history and public proof      | [evidence-preview.ts](../services/api/src/evidence-preview.ts), [claim-repository.ts](../services/api/src/claim-repository.ts) |
+| Scan                | Bounded mainnet RPC coverage, checkpoints and candidate claims                           | [scan-service.ts](../services/api/src/scan-service.ts)                                                                         |
+| Adjudication        | Submission, finality, bound finalized read and transactional reward                      | [worker index](../services/evolution-worker/src/index.ts), [genlayer.ts](../services/evolution-worker/src/genlayer.ts)         |
+| Artwork             | Snapshot validation, rendering, GridFS and version-safe publication                      | [artwork.ts](../services/evolution-worker/src/artwork.ts)                                                                      |
+| Runtime controls    | Body limits, shared quotas, request IDs and safe errors                                  | [runtime-controls.ts](../services/api/src/runtime-controls.ts)                                                                 |
 
-Original token metadata is read-only, safely bounded and cached separately from companion artwork, with explicit refresh failure status. Anonymous public X hydration supports stable numeric identities and source-bound attached images without content interpretation. Fixed provider boundaries and image validation reject unrelated posts, private URLs and unsupported media.
+## Data flow: contribution
 
-The Next adapter enforces the request limit before buffering; Fastify normalizes error/request IDs and uses shared Mongo quotas. Lists use stable opaque cursors. Provider/job metrics are bounded aggregates. Schema version 3 is applied explicitly and repeatably before readiness, never during request cold starts. Both API-instance restarts and actual Mongo transactions are exercised separately from fixture browser tests.
+```mermaid
+sequenceDiagram
+    participant U as Authenticated owner
+    participant A as API
+    participant S as Public source
+    participant D as MongoDB
+    participant W as Worker
+    participant G as GenLayer
+    U->>A: Create preview (idempotency key)
+    A->>S: Retrieve and verify attributed source
+    A->>D: Freeze text and capture generation
+    A->>D: Persist bounded media checkpoints
+    A-->>U: Ready preview (not approval)
+    U->>A: Submit preview (idempotency key)
+    A->>D: Transaction: consume exact generation and create attempt
+    W->>D: Acquire claim lease and pinned evidence/policy
+    W->>G: Owner-signed adjudicate
+    W->>D: Save submission reference
+    G->>A: Independently fetch exact hashed snapshot
+    W->>G: Poll FINALIZED and read LATEST_FINAL
+    W->>D: Validate bindings; transactionally enforce reward
+    W->>D: Publish snapshot artwork under version condition
+    A-->>U: Persisted decision, XP, history and passport
+```
+
+The API freezes source text before resumable media capture. The worker never derives reward authority from a browser-supplied `xpAward`. GenLayer's fetched source is the API-hosted snapshot, so capture accuracy remains a backend trust boundary.
+
+## MongoDB model
+
+| Collections                                                                | Purpose and important relation                                                   |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `wallets`                                                                  | Unique normalized address; wallet contribution serialization point               |
+| `wallet_auth_nonces`, `wallet_sessions`, `wallet_auth_proofs`              | Short-lived challenges/sessions and separately retained private proof            |
+| `nft_profiles`                                                             | Unique NFT identity; latest progression, equipment and current owner association |
+| `x_profile_link_challenges`, `x_profile_links`, `x_identity_bindings`      | Bio proof, current link and persistent anti-rebinding identity                   |
+| `quests`, `quest_policies`                                                 | Current quest availability and immutable policy versions                         |
+| `evidence_previews`                                                        | Owner-scoped capture intent, generation, expiry and consumed claim               |
+| `source_capture_jobs`, `source_media_jobs`, `source_media`                 | Source-first checkpoint and exact attached image records                         |
+| `claims`, `claim_attempts`, `evidence`, `claim_events`                     | Logical claim, numbered revisions, public snapshot and sanitized timeline        |
+| `decisions`, `xp_ledger`                                                   | Bound finalized result and actual committed positive reward                      |
+| `evolution_history`, `evolution_jobs`, `artifacts`                         | Before/after source event, immutable target snapshot and published asset binding |
+| `scan_jobs`, `scan_events`                                                 | Coverage, leases and verified candidates                                         |
+| `audit_events`, `rate_buckets`, `operational_metrics`, `schema_migrations` | Operator provenance, quotas, bounded aggregates and readiness compatibility      |
+
+GridFS uses separate artifact and captured-source buckets. Backups must include both file documents and chunks alongside domain collections. Restoring profiles alone loses the evidence and publication context needed to verify progression.
+
+### Constraints
+
+Migration creates unique indexes for wallet address, NFT identity, nonce/session digests, wallet idempotency, source/reward scopes, quest/version, logical-claim XP, attempt numbers and source-event publication. These constraints are part of reward correctness, not optional performance tuning.
+
+Positive contribution finalizations contend on the same wallet document. Positive XP updates reread the profile inside the transaction. Equipment writes use optimistic `expectedVersion`. Artifact publication checks the target profile version. These address different concurrency hazards and must be preserved separately.
+
+See [mongo.ts](../services/api/src/mongo.ts) for exact index definitions and partial filters.
+
+## Transaction boundaries
+
+| Transaction         | Commits together                                                                                     | External work outside it                             |
+| ------------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Claim creation      | Claim, evidence, attempt, event/audit and matching preview consumption                               | RPC/source/media retrieval                           |
+| Claim finalization  | Decision, claim/attempt/event, positive ledger, current profile, provenance, history and artwork job | GenLayer polling/read and latest ownership RPC check |
+| Equipment update    | Idempotent source event, equipment/version, history and artwork job                                  | Current ownership verification                       |
+| Artwork publication | Artifact/history/job publication and conditional current profile image                               | Generation and GridFS upload checkpoints             |
+
+A replica set is required. External network side effects cannot participate in MongoDB transactions. Ambiguous submission recovery therefore holds the claim and reads finalized state instead of promising exactly-once network execution.
+
+## Artwork and original metadata
+
+Reward/equipment state commits before rendering. The image worker derives stage and equipment from the historical target snapshot. Optional Gemini can change presentation, never eligibility or trait authority. The previous valid image remains available while failures retry. Late jobs can complete historical images without overwriting the current version.
+
+Demo ERC-721 metadata is a short-cached API view of the minted token and persisted profile. The contract owner controls its base URI. Original Chog `tokenURI` is fetched under bounded public-network rules and cached independently; errors retain the last valid metadata with explicit status. Original collection metadata is never mutated by companion evolution.
+
+## API adapter and scaling
+
+The Next adapter lazily creates Fastify, enforces 64 KiB before full buffering, forwards cookies and normalizes failure/request IDs. Its current implementation buffers the injected response, including binary assets; the diagram does not imply an end-to-end streaming CDN.
+
+API instances share Mongo quota buckets and persistent sessions. Stateless instances still depend on a common database, indexes, public origin and contract configuration. The standalone listener does not enable proxy trust automatically; forwarding-IP configuration needs deliberate deployment review.
+
+Work throughput is bounded by provider latency and batch sizes. A tick processes up to the configured capture batch, claim batch and one artwork job. Scheduled Actions is suitable for the MVP, with no guaranteed five-minute execution or finality SLA. Persistent queues and leases support later dedicated worker hosting without changing reward authority.
+
+## Repository layout and design records
+
+```text
+apps/web/                   Product routes, wallet state and API adapter
+services/api/               HTTP and domain persistence
+services/evolution-worker/   Adjudication, finalization and artwork
+packages/evolution-rules/    Progression and equipment rules
+packages/art-composition/    Deterministic art
+packages/shared-types/      Domain contracts
+packages/validation/        Shared validators
+contracts/                  Demo ERC-721
+genlayer/                   Intelligent Contract
+assets/chog-references/     Pinned visual inputs
+.ulpi/design/               Locked product design records
+scripts/                    Deployment and acceptance tooling
+```
+
+[build-plan.md](../build-plan.md) and [implementation-checklist.md](implementation-checklist.md) retain planned milestones and implementation traceability. The current architecture uses MongoDB, replacing the original PostgreSQL plan. Historical plans do not override the implementation described here.

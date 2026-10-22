@@ -1,21 +1,105 @@
 # Local setup
 
-Use Node.js 24, npm 11 and a MongoDB replica set (Atlas or MongoDB 7+). Foundry and `genvm-lint==0.11.0` are needed for the full contract verification gate.
+Use Node.js 24, npm 11+ and a transaction-capable MongoDB replica set or Atlas deployment. This guide starts the product without assuming access to the recorded deployment owner's signer.
 
-1. Run `npm ci`.
-2. Copy `.env.example` to `.env`; configure `MONGODB_URI` and `MONGODB_DATABASE`.
-3. For a local replica set, run `docker compose up -d mongodb`.
-4. Run `npm run db:migrate`. The root command loads `.env`; a configured shell may use `npm run db:migrate --workspace=@chog/api`.
-5. Run `npm run dev` and open http://localhost:3000. Root `.env` is loaded for the web, standalone API and continuous worker. The web uses its same-origin `/api` adapter.
+[Configuration](configuration.md) · [Testing](testing.md) · [Deployment](deployment.md)
 
-Migrations are explicit and repeatable. Schema version 3 adds capture checkpoints, claim attempts, equipment, source events and operational indexes while preserving historical evidence and XP. `/api/ready` requires Mongo connectivity and the current schema marker. Cold starts never run migrations.
+## 1. Install and configure
 
-The demo collection and GenLayer adjudicator addresses refer to existing deployments. Minting requires real wallet confirmation and testnet MON. `GENLAYER_PRIVATE_KEY` must be the funded owner of the adjudicator. Validators require a public HTTPS evidence URL: configure `APP_ORIGIN` with `/api` or an explicit `PUBLIC_API_URL`. `WEB_ORIGIN` must match the browser origin for CORS and signed challenges.
+```sh
+npm ci
+cp .env.example .env
+```
 
-X uses anonymous public pages with `X_SOURCE_MODE=public_page`. No OAuth or API key is required. `X_API_BEARER_TOKEN` is used only by optional explicit `api` mode. GitHub evidence works without a token; `GITHUB_PUBLIC_READ_TOKEN` increases its rate limit. A submitted GitHub README must attribute the wallet. An X post must belong to the verified stable X account ID. Images are captured without image-content analysis.
+Review `.env` before migration:
 
-`GEMINI_API_KEY` enables optional generation for rewarded claims. Without it the deterministic renderer publishes trait artwork. Cosmetic changes always use that renderer. Configured provider failures preserve prior published art and schedule recovery.
+- Use your own `MONGODB_URI` and `MONGODB_DATABASE`.
+- Set `WEB_ORIGIN=http://localhost:3000`, `APP_ORIGIN=http://localhost:3000` and `PUBLIC_API_PATH=/api` for local work.
+- Keep `NEXT_PUBLIC_API_BASE_URL=/api` for the unified web adapter.
+- Leave server private keys empty for UI/source work. Clear `GENLAYER_CONTRACT_ADDRESS` before migration if you have no configured adjudication path, so maintained reward quests are inactive.
+- Recorded public contract addresses identify existing deployments; they do not grant submission/owner authority.
 
-For persistent acceptance, create ignored `.env.integration` with `MONGODB_TEST_URI` for a transaction-capable test server. Runners create unique `chog_test_` databases, verify ownership markers and clean up only their own database. They never select the application database. Run `npm run test:integration` and, after building and installing Chromium with `npx playwright install chromium`, `npm run test:browser:all`. Select an existing Chromium with `CHOG_CHROMIUM_EXECUTABLE` if needed.
+## 2. Start a replica set
 
-Run `npm test`, `node scripts/verify-mvp.mjs` and the acceptance suites before release. See [testing.md](testing.md) and [deployment.md](deployment.md).
+```sh
+docker compose up -d --wait mongodb
+```
+
+The supplied [Compose file](../docker-compose.yml) initializes MongoDB 7 as `rs0` and uses a persistent named volume. Its example connection is `mongodb://127.0.0.1:27017/chog_evolution?replicaSet=rs0`. Check container health before migrating; a standalone MongoDB server cannot execute reward transactions.
+
+For Atlas, supply your own URI, database and appropriate network access instead of running local MongoDB.
+
+## 3. Migrate explicitly
+
+```sh
+npm run db:migrate
+```
+
+Root migration loads `.env`. In a separately configured shell, `npm run db:migrate --workspace=@chog/api` is equivalent. Schema 3 establishes capture/attempt/equipment/event/operational indexes and preserves historical evidence and XP. Cold starts do not run migrations.
+
+Maintained quest availability depends on configuration at migration time. After changing evidence origin, source mode or adjudicator configuration, rerun migration deliberately to refresh managed availability/policies. Existing claim policies remain pinned.
+
+## 4. Run and verify
+
+```sh
+npm run dev
+```
+
+Open [localhost:3000](http://localhost:3000). Next mounts Fastify at `/api`; standalone Fastify also listens on port 4000. The root command loads `.env` for web, API and continuous worker.
+
+```sh
+curl --fail http://localhost:3000/api/health
+curl --fail http://localhost:3000/api/ready
+```
+
+Readiness requires MongoDB plus the current schema marker. It does not establish live provider/consensus availability. Without a GenLayer signer, source/UI work remains available but real reward adjudication does not complete. Keep reward quests inactive for that environment.
+
+## 5. Enable real adjudication separately
+
+Use your own public HTTPS API origin and a funded signer that owns its configured adjudicator. Localhost is unreachable to external validators. `APP_ORIGIN` plus `PUBLIC_API_PATH`, or an explicit full `PUBLIC_API_URL`, must serve exact evidence snapshots. `WEB_ORIGIN` must match the browser origin used for CORS and challenges.
+
+Do not copy a production key into local/test settings. The deployment scripts retain historical account/manifest guards; read [deployment.md](deployment.md) before treating them as reusable provisioning commands.
+
+## Source and artwork behavior
+
+X defaults to `X_SOURCE_MODE=public_page`; no OAuth/key is required. Optional explicit `api` mode consumes `X_API_BEARER_TOKEN`. GitHub public reads work without a token; `GITHUB_PUBLIC_READ_TOKEN` increases API limits. X posts require stable verified author identity; GitHub README evidence must attribute the wallet.
+
+`GEMINI_API_KEY` enables optional reward artwork generation. Without it the deterministic renderer publishes images. Cosmetic jobs always use deterministic rendering. Configured Gemini failures preserve previous artwork and committed XP.
+
+## Verification toolchain
+
+For ordinary development:
+
+```sh
+npm run check
+npm test
+node scripts/verify-project-docs.mjs
+```
+
+Full release verification additionally requires Foundry and Python 3.11+:
+
+```sh
+forge build --root contracts
+python3 -m venv /tmp/chog-genvm-tools
+/tmp/chog-genvm-tools/bin/pip install genvm-linter==0.11.0
+/tmp/chog-genvm-tools/bin/genvm-lint check genlayer/ClaimAdjudicator.py
+```
+
+The package is `genvm-linter`; the executable is `genvm-lint`. Ensure the executable is on PATH for `node scripts/verify-mvp.mjs`.
+
+Persistence suites load ignored `.env.integration` with `MONGODB_TEST_URI`. They create marked random `chog_test_` databases and remove only their own data. Browser checks need a build and Chromium (`npx playwright install chromium` or `CHOG_CHROMIUM_EXECUTABLE`). See [testing.md](testing.md).
+
+## Troubleshooting
+
+| Symptom                     | Check                                                                      |
+| --------------------------- | -------------------------------------------------------------------------- |
+| `schema_migration_required` | Correct database and explicit migration                                    |
+| Transactions unavailable    | Replica-set primary / Atlas transaction support                            |
+| Empty quests                | Adjudicator/evidence/source config at migration and policy freshness       |
+| Ownership mismatch          | Configured chain/collection, selected wallet and actual `ownerOf`          |
+| Source unavailable          | Provider reachability, exact source URL and verified account               |
+| Pending mint                | Saved receipt hash and confirmation depth; do not mint again               |
+| No positive XP              | Finalized bound decision, wallet allowance and current ownership           |
+| No new artwork              | Existing job/provider quota, target version and previous valid publication |
+
+For queued-work recovery use [operations.md](operations.md), preserving receipts and attempt references.

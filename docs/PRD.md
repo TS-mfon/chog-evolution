@@ -19,7 +19,8 @@ The primary audience is Chog community members and hackathon judges. The judge m
 - Separate demo collection and original collection modes; never imply demo tokens belong to the original 1,969-token collection.
 - Demo ERC-721 on Monad testnet; original ownership verification on Monad mainnet, with companion profile state only.
 - Quest discovery, evidence submission, status tracking, and incremental rescan foundations.
-- GenLayer outcomes: accepted, rejected, needs_review, source_unavailable. No XP or artwork generation before an accepted finalized decision and policy validation.
+- GenLayer outcomes: accepted, rejected, needs_review, source_unavailable. Positive XP requires a bound finalized decision, current ownership and transactionally enforced reward scope. An accepted contribution can legitimately award zero XP.
+- Reward artwork follows a positive committed award. Owner-controlled equipment changes create independent history and deterministic artwork without XP or GenLayer adjudication.
 - Server-authoritative XP, levels, stages, trait catalogue, claim deduplication, and evolution history.
 - Controlled art composition based on five approved reference images. Gemini may render after authorization but cannot determine eligibility or rewards.
 - Public Passport showing evidence-backed achievements and distinguishing onchain facts from reviewed public evidence.
@@ -27,7 +28,7 @@ The primary audience is Chog community members and hackathon judges. The judge m
 
 ## Non-goals for MVP
 
-- Modifying original Chog metadata without explicit authorization and contract support.
+- Modifying original Chog metadata; this MVP uses a read-only companion profile.
 - Claims of automatic access to private social activity, likes, attendance, or views.
 - Broad project coverage, token rewards, crafting, arena gameplay, or unsupported quests.
 - Treating a demo fixture as a real transaction or real participation.

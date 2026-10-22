@@ -1,48 +1,65 @@
-# Quest registry
+# Quest registry and policy maintenance
 
-Quests are data with versioned verification policies, not UI copy. A quest remains inactive until its source, dates, eligibility rules, evidence, completion signal, and verification method have been checked and recorded. No ecosystem event or participation record is seeded by this scaffold.
+A quest is data with versioned verification rules. Its current availability is separate from the immutable policy pinned by an existing claim. [Protocol](protocol.md) · [API administration](API.md) · [Operations](operations.md).
 
-## Required registry fields
+## Record and policy model
 
-| Field                                          | Purpose                                                    |
-| ---------------------------------------------- | ---------------------------------------------------------- |
-| `slug`, `name`, `description`                  | Stable identifier and user-facing explanation              |
-| `status`                                       | `inactive`, `active`, or `paused`                          |
-| `source_url`, `source_checked_at`              | Official announcement or authoritative contract reference  |
-| `starts_at`, `ends_at`                         | Eligibility window and timezone-aware dates                |
-| `eligibility_rules`                            | Who qualifies, expressed as reviewable rules               |
-| `evidence_requirements`                        | Required transaction, URL, file, or reviewer evidence      |
-| `completion_signal`                            | Observable fact that means the activity occurred           |
-| `verification_method`                          | `onchain`, `public_evidence`, `manual`, or `hybrid`        |
-| `policy_version`, `xp_reward`, `trait_unlocks` | Immutable reward authorization used by claims              |
-| `automatic_verification`                       | Whether current evidence supports deterministic automation |
+| Record                          | Required meaning                                                   |
+| ------------------------------- | ------------------------------------------------------------------ |
+| Quest `slug`, name, description | Stable identity and user-facing activity                           |
+| Quest status                    | `active`, `paused` or `inactive`                                   |
+| Policy source URL/check time    | Authoritative reference and reviewed freshness                     |
+| Eligibility window              | Explicit starts/ends, timezone-aware dates                         |
+| Policy kind/rules               | Verifiable activity and interpretation constraints                 |
+| Allowed hosts                   | Public snapshot host and permitted external contribution providers |
+| Verification method             | Objective facts plus public interpretation or review               |
+| Policy version / XP reward      | Immutable authorization pinned when creating a claim               |
+| Reward scope                    | Once-only, source or wallet/date boundary                          |
+| Managed revision                | Source-derived identity for app-owned policy updates               |
 
-## Activation policy
+[seedAppQuests](../services/api/src/mongo.ts) owns maintained definitions; [policyUsable](../services/api/src/claim-repository.ts) enforces date/freshness compatibility. External policies require a source review within 30 days. Maintained app policies use `sourceFreshness=maintained` and receive new versions when definitions change.
 
-1. Prefer official Chog and Monad project sources; record exact source and access date.
-2. Determine the real completion signal. Do not infer attendance or social engagement from a wallet transaction that does not prove it.
-3. Use deterministic chain checks for objective facts. Use public evidence or manual review when the source cannot be reliably queried.
-4. Use GenLayer only for interpretation and require validators to inspect the underlying evidence under the stored rules.
-5. Pause a quest when its source is unavailable or rules have changed. Keep historical policy versions for existing claims.
+## Maintained quests
 
-## Maintained app quests — policy version 3
+Progression/reward policy is **3**; individual quest versions increase separately. Migration seeds these evergreen application policies only when their configured evidence/adjudication prerequisites are usable.
 
-The migration seeds these versioned evergreen application policies. They activate only with a usable public evidence base and a configured GenLayer adjudicator; the mint quest also requires the demo collection and X linking requires enabled anonymous public-page access. These are app-owned participation policies, not claims of third-party campaign endorsement.
+| Slug / kind                                  | Required evidence                                                                                         | Reward                                                            |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `demo-first-mint` / `demo_mint`              | Successful canonical testnet receipt, configured collection/token, mint-to-claimant and current ownership | 50 XP once per wallet                                             |
+| `verify-x-bio` / `bio_link`                  | Unique valid bio code, stable numeric X identity and stored verification proof                            | 50 XP once per wallet and bound identity                          |
+| `ecosystem-contribution` / `public_evidence` | Substantive original Chog/Monad public X post or pinned GitHub README, with verified attribution          | 75 XP once per wallet per UTC finalization day; one-hour cooldown |
+| `monad-mainnet-explorer` / `monad_activity`  | Successful outbound mainnet contract interaction with calldata, code and canonical receipt/block          | 25 XP once per wallet per UTC block date                          |
 
-| Slug                     | Observable evidence                                                                              | Reward scope                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- |
-| `demo-first-mint`        | Confirmed receipt, exact collection/token, mint-to-wallet event and current owner                | 50 XP once per wallet                                             |
-| `verify-x-bio`           | Anonymous public X bio containing the unique pending code and stable numeric account identity    | 50 XP once per wallet/X identity                                  |
-| `ecosystem-contribution` | Original, substantive Chog/Monad X post or pinned public GitHub README with verified attribution | 75 XP once per wallet per UTC finalization day; one-hour cooldown |
-| `monad-mainnet-explorer` | Successful finalized outbound Monad mainnet contract interaction                                 | 25 XP once per wallet per UTC block date                          |
+These are app-owned participation policies, not endorsed external campaigns. Source capture, identity linking and scanning do not directly award XP. All positive awards require a bound finalized GenLayer decision plus transactionally enforced allowance and current ownership.
 
-All awards require finalized GenLayer acceptance. Contribution source uniqueness applies globally across quests and profiles. After the daily award, further accepted contributions grant zero XP. The one-hour cooldown also applies across midnight. Mint and X-link remain once-only; linking an account alone is not an XP award. Source capture and scanning never directly award XP. Contributions must meet the stored substantive-content rules; a wallet address, marketing claim, copied repository or unsupported context is insufficient. Evidence snapshots are immutable and current NFT ownership is checked on submission.
+Contribution sources are globally consumed at claim creation, across quests/profiles/wallets. A repository's new commit does not create another repository reward source. Further accepted contributions can have zero XP; `daily_cap`, `cooldown` and `ownership_changed` preserve adjudication separately from the actual amount.
 
-App-maintained policies use `sourceFreshness=maintained` and receive new versions when rules change. External campaigns still expire after 30 days without recorded source review. Keep old policy versions for already-submitted claims. A bio link proves control of an account, not social engagement.
+## Substance and attribution
 
-## Research log — 2026-10-18
+An X post author must match the verified stable account ID, not just a username. GitHub README capture must attribute the claimant wallet. Those facts do not automatically prove originality or substance.
 
-- **Chogtober Week** — The [official Chogtober page](https://chog.zone/) describes a week of daily Monad ecosystem missions, including Chog-focused missions. The page could not be fetched reliably during this review, and the accessible search result did not establish exact dates, per-mission completion records, or an authoritative export/API. Keep inactive; do not infer completion from a wallet or social post.
-- **Chog product activity** — The [official Chog site](https://www.chog.xyz/) lists tools such as its PFP maker, NFT snapshot, swap, and meme maker. The site does not establish a dated quest or a completion signal suitable for awarding XP, so none is activated.
+The maintained rules reject forks, copied work, generic boilerplate, spam, unrelated contributions and unsupported marketing. User context cannot supply missing evidence or change the policy. Images are attached-source documentation only and are not semantically interpreted. Ambiguity yields review without XP.
 
-Recheck these sources and obtain the actual mission rules and participant completion signal before adding a policy version. The API returns only active usable policies; the maintained app quests above do not activate any unverified third-party campaign.
+A bio link establishes identity control; it does not prove likes, attendance, reposts or another activity. Generic onchain calls establish participation under the maintained rule, not a specific protocol's mission.
+
+## Operator policy creation
+
+`POST /v1/admin/quests` requires the admin key, actor label and `sourceReviewed:true`, and returns a newly recorded policy version. The attestation is an operator review, not an automatic external-source audit. Currently exposed administration accepts XP 1–75 and verification methods `public_evidence`, `manual` or `hybrid`; the capture implementation still needs a supported policy kind/evidence path.
+
+Before activating a new campaign:
+
+1. Read the authoritative announcement/contract and record exact source plus review time.
+2. Establish dates, eligibility and a real observable completion signal.
+3. Determine which facts can be verified deterministically and which require interpretation.
+4. Specify bounded evidence capture, attribution, immutable snapshot and reward scope.
+5. Confirm the existing implementation can capture that policy kind; UI copy alone does not add an adapter.
+6. Version the policy and retain prior versions for submitted claims.
+7. Pause future submissions when the source/rules become unreliable; plan pending-claim handling explicitly.
+
+Manual review can reject with zero XP; it cannot accept and issue positive rewards. Re-running migration refreshes app-managed policies and availability, so treat that operation as configuration/policy maintenance rather than only index creation.
+
+## Research history — 2026-10-18
+
+The [Chogtober page](https://chog.zone/) and [Chog product site](https://www.chog.xyz/) were considered as sources. That review did not establish exact campaign dates, participant exports or verifiable per-mission completion. No third-party campaign was activated from those observations.
+
+Recheck authoritative sources and their completion signals before creating a campaign policy. Historical research is not current source freshness or proof of participation.
